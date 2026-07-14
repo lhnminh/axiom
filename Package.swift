@@ -15,7 +15,8 @@ let package = Package(
             name: "EducationOSPDFReader",
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("PDFKit")
+                .linkedFramework("PDFKit"),
+                .linkedLibrary("sqlite3")
             ]
         )
     ]

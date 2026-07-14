@@ -1,16 +1,19 @@
 # EducationOS PDF Reader Prototype
 
-A native macOS prototype for reading PDFs and automatically highlighting likely-important text.
+A native macOS textbook reader that extracts PDF metadata locally and highlights important text on demand.
 
 ## What it does
 
-- Opens local PDF files with Apple's PDFKit.
-- Extracts page text locally.
+- Opens with a textbook library instead of immediately showing a file picker.
+- Initializes the library from a selected folder and recursively discovers its PDFs.
+- References local PDFs without copying or modifying the originals.
+- Extracts and fingerprints every page locally with PDFKit when a textbook is added.
 - Uses Gemini or OpenAI to identify definitions, theorems, lemmas, corollaries, equations, notation, and core concepts.
-- Adds yellow highlight annotations directly on top of important text in the PDF view.
-- Keeps a right sidebar with candidate metadata for future controls.
+- Calls AI only for the current page after the reader scrolls to it.
+- Caches page results in SQLite so the same unchanged page is not analyzed twice.
+- Adds yellow highlight annotations directly on top of important text and keeps the right sidebar.
 
-PDF text itself is not rewritten in-place. This prototype adds visual yellow PDF annotations over text that AI, or the fallback heuristic, considers important.
+PDF text itself is not rewritten in-place. This prototype adds visual yellow PDF annotations over text that the configured AI considers important.
 
 ## Run it
 
@@ -18,9 +21,9 @@ PDF text itself is not rewritten in-place. This prototype adds visual yellow PDF
 swift run EducationOSPDFReader
 ```
 
-Then choose **Open PDF** or press `Command-O`.
+Then choose **Add Folder** or press `Command-O`, and select a folder containing textbook PDFs. Local page metadata is extracted without AI. Open a textbook and pause on a page to trigger that page's AI highlighting.
 
-This SwiftPM prototype is not packaged as a Finder-registered `.app` yet. Double-clicking a PDF in Finder will still open your default PDF app. For now, launch this prototype first, then open the PDF from inside the app.
+This SwiftPM prototype is not packaged as a Finder-registered `.app` yet. Double-clicking a PDF in Finder will still open your default PDF app.
 
 ## AI setup
 
@@ -42,7 +45,7 @@ After that, run normally with `swift run EducationOSPDFReader`.
 
 Shell environment variables still work and override `.env` values.
 
-If the provider API key is missing or the API request fails, the app falls back to the local heuristic and says so in the toolbar/sidebar.
+If the provider API key is missing, local metadata extraction still works and the reader explains why AI highlighting is unavailable. Failed pages can be retried independently.
 
 To use OpenAI instead:
 
@@ -52,16 +55,23 @@ OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-5.2
 ```
 
-## Prototype heuristic
+## Metadata storage
 
-The current analyzer favors sentences that:
+MathPilot stores textbook, page, highlight, concept, and analysis-job metadata in:
 
-- include cue words like `important`, `therefore`, `definition`, `evidence`, or `critical`
-- have a useful academic sentence length
-- contain punctuation such as colons or semicolons
-- include capitalized terms that look like concepts or named entities
+```text
+~/Library/Application Support/MathPilot/mathpilot.sqlite3
+```
 
-This fallback is intentionally local and dependency-free. The primary path is now AI semantic highlighting.
+The original PDFs remain in their existing filesystem locations.
+
+## Verification
+
+Run the non-GUI fixture and cache checks with:
+
+```bash
+swift run EducationOSPDFReader --verify
+```
 
 ## Debug logging
 
