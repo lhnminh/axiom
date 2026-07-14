@@ -1,0 +1,6 @@
+.build/
+.clang-cache/
+.DS_Store
+.env
+mathpilot.log
+mathpilot-last-*.json
