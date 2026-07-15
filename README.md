@@ -28,7 +28,7 @@ This SwiftPM prototype is not packaged as a Finder-registered `.app` yet. Double
 
 ## Pet overlay
 
-The reader displays the 112-point Codex pet over the PDF viewer. Its six-frame idle uses the same per-frame timings and six-times idle slowdown as Codex Pets, so it pauses naturally instead of cycling through the spritesheet continuously.
+The reader displays the Codex pet at a compact 80-point width over the PDF viewer. Its six-frame idle uses the same per-frame timings and six-times idle slowdown as Codex Pets, so it pauses naturally instead of cycling through the spritesheet continuously.
 
 Hovering makes the pet jump. Dragging shrinks it to 95%, switches between the left- and right-running rows after the same four-point movement threshold, clamps it inside the PDF viewer, and saves its normalized position. Analysis activity uses the Codex running, waiting, failed, and review reactions; each reaction plays three times and then settles into the slowed idle. macOS Reduce Motion displays only the first frame of each state.
 

@@ -12,7 +12,7 @@ Start after `codex/mvp-spec-and-pet-assets` is merged, or rebase onto it while d
 
 - Use Codex as the fixed MVP pet.
 - Bundle the existing `pet.json` and `spritesheet.webp` under `Sources/Axiom/Resources/Pets/codex/`.
-- Render the pet at Codex's 112-point default width and the atlas's `192:208` aspect ratio.
+- Render the pet at the compact 80-point width and the atlas's `192:208` aspect ratio.
 - Validate the version-2 atlas as 8 columns by 11 rows before showing it.
 - Use the six idle frames and exact Codex frame durations, multiplied by Codex's six-times idle slowdown.
 - Play a non-idle reaction three times, then remain in the slowed idle loop.

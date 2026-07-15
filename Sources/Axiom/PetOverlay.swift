@@ -262,7 +262,7 @@ enum CodexPetPositionStore {
 
 @MainActor
 final class PetOverlayView: NSView {
-    static let defaultWidth: CGFloat = 112
+    static let defaultWidth: CGFloat = 80
     static let defaultSize = NSSize(
         width: defaultWidth,
         height: defaultWidth * CodexPetAnimationContract.cellSize.height / CodexPetAnimationContract.cellSize.width

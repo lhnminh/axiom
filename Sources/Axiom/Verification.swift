@@ -201,16 +201,20 @@ enum AxiomVerification {
             throw VerificationError.failed("Hover and drag state precedence does not match Codex.")
         }
 
-        let mascotBounds = NSRect(x: 0, y: 0, width: 112, height: 121)
-        guard CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 56, y: 122), spriteVersionNumber: 2)
+        let petSize = NSSize(
+            width: 80,
+            height: 80 * CodexPetAnimationContract.cellSize.height / CodexPetAnimationContract.cellSize.width
+        )
+        let mascotBounds = NSRect(origin: .zero, size: petSize)
+        guard CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: mascotBounds.midX, y: mascotBounds.maxY + 1), spriteVersionNumber: 2)
                 == CodexPetFrame(rowIndex: 9, columnIndex: 0, frameDuration: 0),
-              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 113, y: 60.5), spriteVersionNumber: 2)
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: mascotBounds.maxX + 1, y: mascotBounds.midY), spriteVersionNumber: 2)
                 == CodexPetFrame(rowIndex: 9, columnIndex: 4, frameDuration: 0),
-              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 56, y: -1), spriteVersionNumber: 2)
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: mascotBounds.midX, y: mascotBounds.minY - 1), spriteVersionNumber: 2)
                 == CodexPetFrame(rowIndex: 10, columnIndex: 0, frameDuration: 0),
-              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: -1, y: 60.5), spriteVersionNumber: 2)
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: mascotBounds.minX - 1, y: mascotBounds.midY), spriteVersionNumber: 2)
                 == CodexPetFrame(rowIndex: 10, columnIndex: 4, frameDuration: 0),
-              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 56, y: 60.5), spriteVersionNumber: 2) == nil else {
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: mascotBounds.midX, y: mascotBounds.midY), spriteVersionNumber: 2) == nil else {
             throw VerificationError.failed("The 16-direction look row mapping is incorrect.")
         }
 
@@ -218,10 +222,7 @@ enum AxiomVerification {
         let position = CodexPetNormalizedPosition(x: 0.35, y: 0.7)
         let frame = CodexPetPositioning.frame(
             in: movementBounds,
-            size: NSSize(
-                width: 112,
-                height: 112 * CodexPetAnimationContract.cellSize.height / CodexPetAnimationContract.cellSize.width
-            ),
+            size: petSize,
             normalizedPosition: position
         )
         let roundTrip = CodexPetPositioning.normalizedPosition(for: frame, in: movementBounds)
