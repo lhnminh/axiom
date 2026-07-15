@@ -12,6 +12,7 @@ A native macOS textbook reader that extracts PDF metadata locally and highlights
 - Calls AI only for the current page after the reader scrolls to it.
 - Caches page results in SQLite so the same unchanged page is not analyzed twice.
 - Adds yellow highlight annotations directly on top of important text and keeps the right sidebar.
+- Shows the bundled Codex pet over the PDF reader with its passive idle animation.
 
 PDF text itself is not rewritten in-place. This prototype adds visual yellow PDF annotations over text that the configured AI considers important.
 
@@ -24,6 +25,12 @@ swift run Axiom
 Then choose **Add Folder** or press `Command-O`, and select a folder containing textbook PDFs. Local page metadata is extracted without AI. Open a textbook and pause on a page to trigger that page's AI highlighting.
 
 This SwiftPM prototype is not packaged as a Finder-registered `.app` yet. Double-clicking a PDF in Finder will still open your default PDF app.
+
+## Pet overlay
+
+The reader displays the Codex pet in its lower-right corner and loops the idle row from the bundled WebP spritesheet. The overlay is decorative and click-through, so it does not block PDF scrolling or selection.
+
+This first implementation does not react to AI activity and cannot be dragged, dismissed, or disabled yet.
 
 ## AI setup
 

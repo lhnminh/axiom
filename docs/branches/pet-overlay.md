@@ -8,6 +8,15 @@ Add the decorative AI pet to the PDF reader and use it to visualize AI activity.
 
 Start after `codex/mvp-spec-and-pet-assets` is merged, or rebase onto it while developing.
 
+## First Implementation Slice
+
+- Use Codex as the fixed MVP pet.
+- Bundle the existing `pet.json` and `spritesheet.webp` under `Sources/Axiom/Resources/Pets/codex/`.
+- Render the pet over the lower-right corner of the PDF viewer.
+- Loop the seven-frame idle animation from spritesheet row 0.
+- Keep the overlay decorative and click-through.
+- Defer AI reactions, drag, dismiss, and disable behavior to a later slice.
+
 ## Scope
 
 - Load one fixed MVP pet.

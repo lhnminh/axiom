@@ -377,12 +377,112 @@ final class LibraryViewController: NSViewController, NSTableViewDataSource, NSTa
 }
 
 @MainActor
+enum CodexPetSprites {
+    static let frameSize = NSSize(width: 192, height: 208)
+    static let idleFrameCount = 7
+    private static let columnCount = 8
+
+    static func idleFrames() -> [NSImage] {
+        guard let url = Bundle.module.url(
+            forResource: "spritesheet",
+            withExtension: "webp",
+            subdirectory: "Pets/codex"
+        ), let spriteSheet = NSImage(contentsOf: url),
+           let source = spriteSheet.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return []
+        }
+
+        let cellWidth = source.width / columnCount
+        let cellHeight = Int(frameSize.height)
+        guard cellWidth == Int(frameSize.width), source.height >= cellHeight else { return [] }
+
+        return (0..<idleFrameCount).compactMap { column in
+            let frameRect = CGRect(
+                x: column * cellWidth,
+                y: 0,
+                width: cellWidth,
+                height: cellHeight
+            )
+            guard let frame = source.cropping(to: frameRect) else { return nil }
+            return NSImage(cgImage: frame, size: frameSize)
+        }
+    }
+}
+
+@MainActor
+final class PetOverlayView: NSView {
+    private let imageView = NSImageView()
+    private let frames = CodexPetSprites.idleFrames()
+    private let frameDurations: [TimeInterval] = [1.4, 0.18, 0.18, 0.18, 0.18, 0.18, 0.55]
+    private var frameIndex = 0
+    private var frameTimer: Timer?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        isHidden = frames.isEmpty
+        imageView.image = frames.first
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            stopIdleAnimation()
+        } else {
+            startIdleAnimation()
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    private func startIdleAnimation() {
+        guard !frames.isEmpty, frameTimer == nil else { return }
+        frameIndex = 0
+        imageView.image = frames[frameIndex]
+        scheduleNextFrame()
+    }
+
+    private func stopIdleAnimation() {
+        frameTimer?.invalidate()
+        frameTimer = nil
+    }
+
+    private func scheduleNextFrame() {
+        let duration = frameDurations[frameIndex]
+        let timer = Timer(timeInterval: duration, target: self, selector: #selector(advanceFrame), userInfo: nil, repeats: false)
+        frameTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    @objc private func advanceFrame() {
+        frameTimer = nil
+        guard window != nil, !frames.isEmpty else { return }
+        frameIndex = (frameIndex + 1) % frames.count
+        imageView.image = frames[frameIndex]
+        scheduleNextFrame()
+    }
+}
+
+@MainActor
 final class ReaderViewController: NSViewController {
     private let textbook: TextbookSummary
     private let store: TextbookStore
     private let analyzer: ConfiguredMathAnalyzer
     private let onBack: () -> Void
     private let pdfView = PDFView()
+    private let petOverlay = PetOverlayView()
     private let sidebar = NSTextView()
     private let statusLabel = NSTextField(labelWithString: "Opening textbook...")
     private var document: PDFDocument?
@@ -426,6 +526,7 @@ final class ReaderViewController: NSViewController {
         sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(toolbar)
         root.addSubview(pdfView)
+        root.addSubview(petOverlay)
         root.addSubview(sidebarScroll)
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: root.topAnchor),
@@ -437,6 +538,10 @@ final class ReaderViewController: NSViewController {
             pdfView.trailingAnchor.constraint(equalTo: sidebarScroll.leadingAnchor, constant: -10),
             pdfView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
             pdfView.widthAnchor.constraint(greaterThanOrEqualToConstant: 620),
+            petOverlay.trailingAnchor.constraint(equalTo: pdfView.trailingAnchor, constant: -18),
+            petOverlay.bottomAnchor.constraint(equalTo: pdfView.bottomAnchor, constant: -18),
+            petOverlay.widthAnchor.constraint(equalToConstant: 124),
+            petOverlay.heightAnchor.constraint(equalToConstant: 134),
             sidebarScroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
             sidebarScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             sidebarScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),

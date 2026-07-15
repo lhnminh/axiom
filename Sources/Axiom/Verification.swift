@@ -38,6 +38,15 @@ enum AxiomVerification {
         )
         check(discovered.count == 9, "Folder discovery found all nine PDF fixtures", failures: &failures)
 
+        let petIdleAnimationIsValid = await MainActor.run {
+            let frames = CodexPetSprites.idleFrames()
+            let uniqueFrames = Set(frames.compactMap(\.tiffRepresentation))
+            return frames.count == CodexPetSprites.idleFrameCount
+                && frames.allSatisfy { $0.size == CodexPetSprites.frameSize }
+                && uniqueFrames.count > 1
+        }
+        check(petIdleAnimationIsValid, "Codex pet idle animation loaded seven frames with motion", failures: &failures)
+
         if failures.isEmpty {
             print("Verification complete: all checks passed")
             return true
