@@ -24,6 +24,13 @@ enum TextbookURLResolver {
     }
 }
 
+enum AxiomBrand {
+    static let logo: NSImage? = {
+        guard let url = Bundle.module.url(forResource: "Axiom Logo", withExtension: "png") else { return nil }
+        return NSImage(contentsOf: url)
+    }()
+}
+
 @MainActor
 final class TextbookRowView: NSTableCellView {
     private let cover = NSImageView()
@@ -116,16 +123,25 @@ final class LibraryViewController: NSViewController, NSTableViewDataSource, NSTa
 
         let header = NSView()
         header.translatesAutoresizingMaskIntoConstraints = false
-        let title = NSTextField(labelWithString: "Textbooks")
-        title.font = .systemFont(ofSize: 24, weight: .bold)
+        let logo = NSImageView(image: AxiomBrand.logo ?? NSImage())
+        logo.imageScaling = .scaleProportionallyUpOrDown
+        logo.translatesAutoresizingMaskIntoConstraints = false
+        let title = NSTextField(labelWithString: "Axiom")
+        title.font = .systemFont(ofSize: 26, weight: .bold)
         title.translatesAutoresizingMaskIntoConstraints = false
+        let subtitle = NSTextField(labelWithString: "Textbook Library")
+        subtitle.font = .systemFont(ofSize: 13, weight: .medium)
+        subtitle.textColor = .secondaryLabelColor
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
         let addButton = NSButton(title: "Add Folder", target: self, action: #selector(addFolder))
         addButton.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "Add textbook folder")
         addButton.imagePosition = .imageLeading
         addButton.toolTip = "Reference all PDFs in a folder"
         addButton.bezelStyle = .rounded
         addButton.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(logo)
         header.addSubview(title)
+        header.addSubview(subtitle)
         header.addSubview(addButton)
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("textbook"))
@@ -172,8 +188,14 @@ final class LibraryViewController: NSViewController, NSTableViewDataSource, NSTa
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             header.heightAnchor.constraint(equalToConstant: 72),
-            title.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 24),
-            title.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            logo.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 24),
+            logo.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 36),
+            logo.heightAnchor.constraint(equalToConstant: 36),
+            title.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 12),
+            title.bottomAnchor.constraint(equalTo: header.centerYAnchor, constant: 1),
+            subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 1),
             addButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -24),
             addButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
@@ -690,16 +712,25 @@ final class AppCoordinator {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum WindowMetrics {
+        static let initialSize = NSSize(width: 1440, height: 900)
+        static let minimumSize = NSSize(width: 1120, height: 760)
+    }
+
     private var window: NSWindow?
     private var coordinator: AppCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 780),
+            contentRect: NSRect(origin: .zero, size: WindowMetrics.initialSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
+        window.minSize = WindowMetrics.minimumSize
+        if let logo = AxiomBrand.logo {
+            NSApplication.shared.applicationIconImage = logo
+        }
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
