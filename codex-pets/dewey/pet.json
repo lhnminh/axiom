@@ -1,0 +1,7 @@
+{
+  "id": "dewey",
+  "displayName": "Dewey",
+  "description": "The built-in Dewey pet extracted from the Codex app.",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.webp"
+}
