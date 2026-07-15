@@ -29,9 +29,9 @@ actor TextbookStore {
                 appropriateFor: nil,
                 create: true
             )
-            let directory = applicationSupport.appendingPathComponent("MathPilot", isDirectory: true)
+            let directory = applicationSupport.appendingPathComponent("Axiom", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            resolvedURL = directory.appendingPathComponent("mathpilot.sqlite3")
+            resolvedURL = directory.appendingPathComponent("axiom.sqlite3")
         }
 
         guard sqlite3_open(resolvedURL.path, &database) == SQLITE_OK else {
@@ -40,7 +40,7 @@ actor TextbookStore {
         try Self.execute("PRAGMA foreign_keys = ON;", database: database)
         try Self.execute("PRAGMA journal_mode = WAL;", database: database)
         try Self.migrate(database: database)
-        MathPilotLogger.info("Metadata database ready. path=\(resolvedURL.path)")
+        AxiomLogger.info("Metadata database ready. path=\(resolvedURL.path)")
     }
 
     func registerTextbook(url: URL, bookmark: Data?) throws -> TextbookSummary {

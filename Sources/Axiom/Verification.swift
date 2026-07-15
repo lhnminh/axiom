@@ -1,7 +1,7 @@
 import Foundation
 import PDFKit
 
-enum MathPilotVerification {
+enum AxiomVerification {
     static func run() async -> Bool {
         var failures: [String] = []
 
@@ -48,10 +48,10 @@ enum MathPilotVerification {
 
     private static func verifyStore() async throws {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mathpilot-verify-\(UUID().uuidString).sqlite3")
+            .appendingPathComponent("axiom-verify-\(UUID().uuidString).sqlite3")
         let store = try TextbookStore(databaseURL: url)
         let textbook = try await store.registerTextbook(
-            url: URL(fileURLWithPath: "/tmp/mathpilot-example.pdf"),
+            url: URL(fileURLWithPath: "/tmp/axiom-example.pdf"),
             bookmark: nil
         )
         try await store.beginExtraction(textbookID: textbook.id, fingerprint: "book-v1", pageCount: 1)
@@ -111,7 +111,7 @@ enum MathPilotVerification {
         let fixture = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("mock-data/ISLP_website-28_merged.pdf")
         let databaseURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mathpilot-import-\(UUID().uuidString).sqlite3")
+            .appendingPathComponent("axiom-import-\(UUID().uuidString).sqlite3")
         let store = try TextbookStore(databaseURL: databaseURL)
         let textbook = try await store.registerTextbook(url: fixture, bookmark: nil)
         await TextbookMetadataExtractor().extract(textbookID: textbook.id, url: fixture, store: store)

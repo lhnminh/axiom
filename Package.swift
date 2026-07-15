@@ -3,16 +3,16 @@
 import PackageDescription
 
 let package = Package(
-    name: "EducationOSPDFReader",
+    name: "Axiom",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "EducationOSPDFReader", targets: ["EducationOSPDFReader"])
+        .executable(name: "Axiom", targets: ["Axiom"])
     ],
     targets: [
         .executableTarget(
-            name: "EducationOSPDFReader",
+            name: "Axiom",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("PDFKit"),

@@ -2,7 +2,7 @@ import Foundation
 
 enum MathAnalysisPrompt {
     static let instructions = """
-    You are MathPilot, an AI reading assistant for mathematics textbooks.
+    You are Axiom, an AI reading assistant for mathematics textbooks.
     Identify only text spans that should be visually highlighted on the supplied page.
     Prefer definitions, theorems, lemmas, corollaries, equations, notation, and central concepts.
     exact_text must be copied exactly from the page text and should be short enough to highlight directly.
@@ -19,8 +19,8 @@ enum MathAnalysisPrompt {
         return highlights.compactMap { highlight in
             guard highlight.page_index == page.pageIndex,
                   let range = rangeForHighlight(highlight.exact_text, in: page.text) else {
-                MathPilotLogger.error(
-                    "Could not map highlight to page. page=\(page.pageIndex + 1), kind=\(highlight.kind), text=\(MathPilotLogger.snippet(highlight.exact_text, limit: 180))"
+                AxiomLogger.error(
+                    "Could not map highlight to page. page=\(page.pageIndex + 1), kind=\(highlight.kind), text=\(AxiomLogger.snippet(highlight.exact_text, limit: 180))"
                 )
                 return nil
             }
@@ -129,7 +129,7 @@ final class ConfiguredMathAnalyzer {
             providerName = "Gemini"
             modelName = gemini.model
         }
-        MathPilotLogger.info(
+        AxiomLogger.info(
             "Configured AI provider=\(providerName), model=\(modelName), configured=\(isConfigured), promptVersion=\(AnalysisIdentity.promptVersion)"
         )
     }
@@ -207,18 +207,18 @@ final class GeminiMathAnalyzer {
         request.addValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let started = ContinuousClock.now
-        MathPilotLogger.info(
-            "Gemini page request starting. model=\(model), page=\(pageIndex + 1), inputCharacters=\(text.count), key=\(MathPilotLogger.redact(apiKey))"
+        AxiomLogger.info(
+            "Gemini page request starting. model=\(model), page=\(pageIndex + 1), inputCharacters=\(text.count), key=\(AxiomLogger.redact(apiKey))"
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw RemoteAnalyzerError.invalidResponse(statusCode: status, body: MathPilotLogger.snippet(data))
+            throw RemoteAnalyzerError.invalidResponse(statusCode: status, body: AxiomLogger.snippet(data))
         }
-        MathPilotLogger.info(
-            "Gemini page request succeeded. page=\(pageIndex + 1), durationMs=\(MathPilotLogger.durationMilliseconds(since: started)), responseBytes=\(data.count)"
+        AxiomLogger.info(
+            "Gemini page request succeeded. page=\(pageIndex + 1), durationMs=\(AxiomLogger.durationMilliseconds(since: started)), responseBytes=\(data.count)"
         )
-        MathPilotLogger.writeDebugFile(name: "mathpilot-last-gemini-response.json", data: data)
+        AxiomLogger.writeDebugFile(name: "axiom-last-gemini-response.json", data: data)
         let output = try Self.extractOutputText(data)
         do {
             return try JSONDecoder().decode(MathHighlightResponse.self, from: Data(output.utf8))
@@ -230,11 +230,11 @@ final class GeminiMathAnalyzer {
     private static func extractOutputText(_ data: Data) throws -> String {
         let object = try JSONSerialization.jsonObject(with: data)
         guard let dictionary = object as? [String: Any] else {
-            throw RemoteAnalyzerError.missingOutputText(body: MathPilotLogger.snippet(data))
+            throw RemoteAnalyzerError.missingOutputText(body: AxiomLogger.snippet(data))
         }
         if let output = dictionary["output_text"] as? String { return clean(output) }
         if let found = findHighlightJSON(object) { return clean(found) }
-        throw RemoteAnalyzerError.missingOutputText(body: MathPilotLogger.snippet(data))
+        throw RemoteAnalyzerError.missingOutputText(body: AxiomLogger.snippet(data))
     }
 
     private static func findHighlightJSON(_ value: Any) -> String? {
@@ -306,7 +306,7 @@ final class OpenAIMathAnalyzer {
             "input": MathAnalysisPrompt.input(pageIndex: pageIndex, text: text),
             "text": ["format": [
                 "type": "json_schema",
-                "name": "mathpilot_page_highlights",
+                "name": "axiom_page_highlights",
                 "schema": GeminiMathAnalyzer.schema(limit: limit),
                 "strict": true
             ]]
@@ -320,14 +320,14 @@ final class OpenAIMathAnalyzer {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw RemoteAnalyzerError.invalidResponse(statusCode: status, body: MathPilotLogger.snippet(data))
+            throw RemoteAnalyzerError.invalidResponse(statusCode: status, body: AxiomLogger.snippet(data))
         }
-        MathPilotLogger.info(
-            "OpenAI page request succeeded. page=\(pageIndex + 1), durationMs=\(MathPilotLogger.durationMilliseconds(since: started)), responseBytes=\(data.count)"
+        AxiomLogger.info(
+            "OpenAI page request succeeded. page=\(pageIndex + 1), durationMs=\(AxiomLogger.durationMilliseconds(since: started)), responseBytes=\(data.count)"
         )
         let object = try JSONSerialization.jsonObject(with: data)
         guard let dictionary = object as? [String: Any], let output = dictionary["output"] as? [[String: Any]] else {
-            throw RemoteAnalyzerError.missingOutputText(body: MathPilotLogger.snippet(data))
+            throw RemoteAnalyzerError.missingOutputText(body: AxiomLogger.snippet(data))
         }
         for item in output {
             if let content = item["content"] as? [[String: Any]] {
@@ -338,6 +338,6 @@ final class OpenAIMathAnalyzer {
                 }
             }
         }
-        throw RemoteAnalyzerError.missingOutputText(body: MathPilotLogger.snippet(data))
+        throw RemoteAnalyzerError.missingOutputText(body: AxiomLogger.snippet(data))
     }
 }

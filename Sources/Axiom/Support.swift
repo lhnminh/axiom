@@ -1,8 +1,8 @@
 import Foundation
 
-enum MathPilotLogger {
+enum AxiomLogger {
     private static let logURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("mathpilot.log")
+        .appendingPathComponent("axiom.log")
 
     static var path: String { logURL.path }
 

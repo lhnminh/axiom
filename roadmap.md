@@ -1,10 +1,10 @@
-# MathPilot MVP Roadmap (Hackathon)
+# Axiom MVP Roadmap (Hackathon)
 
 ## Vision
 
-**MathPilot** is an AI-powered reading environment for mathematics that helps students understand complex material without replacing the learning process.
+**Axiom** is an AI-powered reading environment for mathematics that helps students understand complex material without replacing the learning process.
 
-Instead of chatting with a PDF, MathPilot understands an entire course and augments the reading experience with contextual AI.
+Instead of chatting with a PDF, Axiom understands an entire course and augments the reading experience with contextual AI.
 
 ---
 
@@ -18,7 +18,7 @@ Demonstrate how AI can transform static lecture notes into an interactive mathem
 
 ## 1. Course Import
 
-The student drags an entire course folder into MathPilot.
+The student drags an entire course folder into Axiom.
 
 ```
 Real Analysis/
@@ -30,13 +30,13 @@ Real Analysis/
 └── Midterm Review.pdf
 ```
 
-MathPilot indexes every document and prepares the course for reading.
+Axiom indexes every document and prepares the course for reading.
 
 ---
 
 ## 2. AI Course Processing
 
-Instead of treating every PDF independently, MathPilot builds semantic metadata across the entire course.
+Instead of treating every PDF independently, Axiom builds semantic metadata across the entire course.
 
 Extract:
 
@@ -70,7 +70,7 @@ This creates a structured knowledge base that powers the reading experience.
 
 Students open any lecture note and read normally.
 
-As they read, MathPilot automatically:
+As they read, Axiom automatically:
 
 - Highlights important mathematical concepts
 - Identifies definitions and theorems
@@ -133,4 +133,4 @@ Click a highlighted concept to see:
 
 AI should **empower mathematical thinking**, not replace it.
 
-Instead of giving students answers, MathPilot helps them understand what they're reading.
+Instead of giving students answers, Axiom helps them understand what they're reading.

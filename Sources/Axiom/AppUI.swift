@@ -348,7 +348,7 @@ final class LibraryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func presentError(_ message: String) {
         let alert = NSAlert()
-        alert.messageText = "MathPilot"
+        alert.messageText = "Axiom"
         alert.informativeText = message
         alert.runModal()
     }
@@ -519,12 +519,12 @@ final class ReaderViewController: NSViewController {
         let lookupStarted = ContinuousClock.now
         do {
             let cache = try await store.cachedAnalysis(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity)
-            MathPilotLogger.info(
-                "Page cache lookup. textbookID=\(textbook.id), page=\(pageIndex + 1), durationMs=\(MathPilotLogger.durationMilliseconds(since: lookupStarted))"
+            AxiomLogger.info(
+                "Page cache lookup. textbookID=\(textbook.id), page=\(pageIndex + 1), durationMs=\(AxiomLogger.durationMilliseconds(since: lookupStarted))"
             )
             switch cache {
             case let .ready(highlights):
-                MathPilotLogger.info("Page cache hit. textbookID=\(textbook.id), page=\(pageIndex + 1), highlights=\(highlights.count)")
+                AxiomLogger.info("Page cache hit. textbookID=\(textbook.id), page=\(pageIndex + 1), highlights=\(highlights.count)")
                 if currentPageIndex == pageIndex { render(highlights.map(\.passage), status: highlights.isEmpty ? "No highlights found" : "Highlighted", note: "Loaded from local metadata cache.") }
                 return
             case let .failed(message):
@@ -534,7 +534,7 @@ final class ReaderViewController: NSViewController {
                 if currentPageIndex == pageIndex { renderSidebar(status: "Analyzing", passages: [], note: "This page analysis is already running.") }
                 return
             case .missing:
-                MathPilotLogger.info("Page cache miss. textbookID=\(textbook.id), page=\(pageIndex + 1), reason=missing_or_invalid_identity")
+                AxiomLogger.info("Page cache miss. textbookID=\(textbook.id), page=\(pageIndex + 1), reason=missing_or_invalid_identity")
             }
 
             guard analyzer.isConfigured else {
@@ -555,15 +555,15 @@ final class ReaderViewController: NSViewController {
             let passages = try await analyzeWithRetry(page: PageText(pageIndex: pageIndex, text: page.text))
             let persistStarted = ContinuousClock.now
             try await store.saveAnalysis(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity, passages: passages)
-            MathPilotLogger.info(
-                "Page analysis persisted. textbookID=\(textbook.id), page=\(pageIndex + 1), passages=\(passages.count), durationMs=\(MathPilotLogger.durationMilliseconds(since: persistStarted))"
+            AxiomLogger.info(
+                "Page analysis persisted. textbookID=\(textbook.id), page=\(pageIndex + 1), passages=\(passages.count), durationMs=\(AxiomLogger.durationMilliseconds(since: persistStarted))"
             )
             if currentPageIndex == pageIndex {
                 render(passages, status: passages.isEmpty ? "No highlights found" : "Highlighted", note: "Saved to the local metadata cache.")
             }
         } catch {
             try? await store.failAnalysis(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity, error: error.localizedDescription)
-            MathPilotLogger.error("Page analysis failed. textbookID=\(textbook.id), page=\(pageIndex + 1), error=\(error.localizedDescription)")
+            AxiomLogger.error("Page analysis failed. textbookID=\(textbook.id), page=\(pageIndex + 1), error=\(error.localizedDescription)")
             if currentPageIndex == pageIndex { renderSidebar(status: "Failed", passages: [], note: error.localizedDescription) }
         }
     }
@@ -573,8 +573,8 @@ final class ReaderViewController: NSViewController {
         guard let text = document?.page(at: pageIndex)?.string else { return nil }
         let started = ContinuousClock.now
         try await store.saveExtractedPage(textbookID: textbook.id, pageIndex: pageIndex, text: text)
-        MathPilotLogger.info(
-            "Visible page metadata extracted on demand. textbookID=\(textbook.id), page=\(pageIndex + 1), durationMs=\(MathPilotLogger.durationMilliseconds(since: started)), aiRequests=0"
+        AxiomLogger.info(
+            "Visible page metadata extracted on demand. textbookID=\(textbook.id), page=\(pageIndex + 1), durationMs=\(AxiomLogger.durationMilliseconds(since: started)), aiRequests=0"
         )
         return try await store.page(textbookID: textbook.id, pageIndex: pageIndex)
     }
@@ -587,7 +587,7 @@ final class ReaderViewController: NSViewController {
             } catch let error as RemoteAnalyzerError where error.isRetryable && attempt < 2 {
                 attempt += 1
                 let delay = attempt == 1 ? 1 : 2
-                MathPilotLogger.info("Retrying page analysis. page=\(page.pageIndex + 1), attempt=\(attempt + 1), delaySeconds=\(delay)")
+                AxiomLogger.info("Retrying page analysis. page=\(page.pageIndex + 1), attempt=\(attempt + 1), delaySeconds=\(delay)")
                 try await Task.sleep(for: .seconds(delay))
             }
         }
@@ -596,7 +596,7 @@ final class ReaderViewController: NSViewController {
     private func render(_ passages: [ImportantPassage], status: String, note: String) {
         guard let document, let page = document.page(at: currentPageIndex) else { return }
         let renderStarted = ContinuousClock.now
-        for annotation in page.annotations where annotation.userName == "EducationOSAutoHighlight" {
+        for annotation in page.annotations where annotation.userName == "AxiomAutoHighlight" {
             page.removeAnnotation(annotation)
         }
         var annotationCount = 0
@@ -605,14 +605,14 @@ final class ReaderViewController: NSViewController {
             for line in selection.selectionsByLine() {
                 let annotation = PDFAnnotation(bounds: line.bounds(for: page).insetBy(dx: -2, dy: -1), forType: .highlight, withProperties: nil)
                 annotation.color = NSColor.systemYellow.withAlphaComponent(0.55)
-                annotation.userName = "EducationOSAutoHighlight"
+                annotation.userName = "AxiomAutoHighlight"
                 page.addAnnotation(annotation)
                 annotationCount += 1
             }
         }
         pdfView.setNeedsDisplay(pdfView.bounds)
-        MathPilotLogger.info(
-            "Page annotations rendered. page=\(currentPageIndex + 1), passages=\(passages.count), annotations=\(annotationCount), durationMs=\(MathPilotLogger.durationMilliseconds(since: renderStarted))"
+        AxiomLogger.info(
+            "Page annotations rendered. page=\(currentPageIndex + 1), passages=\(passages.count), annotations=\(annotationCount), durationMs=\(AxiomLogger.durationMilliseconds(since: renderStarted))"
         )
         renderSidebar(status: status, passages: passages, note: note)
     }
@@ -671,7 +671,7 @@ final class AppCoordinator {
         }
         self.library = library
         window.contentViewController = library
-        window.title = "MathPilot Textbooks"
+        window.title = "Axiom Textbooks"
     }
 
     func importFolder() {
@@ -722,7 +722,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(appItem)
         menu.addItem(fileItem)
         let appMenu = NSMenu()
-        appMenu.addItem(NSMenuItem(title: "Quit MathPilot", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appMenu.addItem(NSMenuItem(title: "Quit Axiom", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         let fileMenu = NSMenu(title: "File")
         let addFolderItem = NSMenuItem(title: "Add Textbook Folder...", action: #selector(addFolderFromMenu), keyEquivalent: "o")

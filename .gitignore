@@ -2,5 +2,7 @@
 .clang-cache/
 .DS_Store
 .env
+axiom.log
+axiom-last-*.json
 mathpilot.log
 mathpilot-last-*.json

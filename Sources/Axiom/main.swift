@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 @MainActor
-enum EducationOSPDFReaderApp {
+enum AxiomApp {
     private static var appDelegate: AppDelegate?
 
     static func main() {
@@ -17,10 +17,10 @@ enum EducationOSPDFReaderApp {
 
 if CommandLine.arguments.contains("--verify") {
     Task {
-        let succeeded = await MathPilotVerification.run()
+        let succeeded = await AxiomVerification.run()
         Foundation.exit(succeeded ? 0 : 1)
     }
     dispatchMain()
 } else {
-    EducationOSPDFReaderApp.main()
+    AxiomApp.main()
 }

@@ -25,17 +25,17 @@ actor TextbookMetadataExtractor {
                 let pageStarted = ContinuousClock.now
                 let text = document.page(at: pageIndex)?.string ?? ""
                 try await store.saveExtractedPage(textbookID: textbookID, pageIndex: pageIndex, text: text)
-                MathPilotLogger.info(
-                    "Local metadata extracted. textbookID=\(textbookID), page=\(pageIndex + 1), characters=\(text.count), durationMs=\(MathPilotLogger.durationMilliseconds(since: pageStarted))"
+                AxiomLogger.info(
+                    "Local metadata extracted. textbookID=\(textbookID), page=\(pageIndex + 1), characters=\(text.count), durationMs=\(AxiomLogger.durationMilliseconds(since: pageStarted))"
                 )
             }
             try await store.finishExtraction(textbookID: textbookID)
-            MathPilotLogger.info(
-                "Local textbook extraction complete. textbookID=\(textbookID), pages=\(document.pageCount), durationMs=\(MathPilotLogger.durationMilliseconds(since: started)), aiRequests=0"
+            AxiomLogger.info(
+                "Local textbook extraction complete. textbookID=\(textbookID), pages=\(document.pageCount), durationMs=\(AxiomLogger.durationMilliseconds(since: started)), aiRequests=0"
             )
         } catch {
             try? await store.failExtraction(textbookID: textbookID, error: error.localizedDescription)
-            MathPilotLogger.error("Local textbook extraction failed. textbookID=\(textbookID), error=\(error.localizedDescription)")
+            AxiomLogger.error("Local textbook extraction failed. textbookID=\(textbookID), error=\(error.localizedDescription)")
         }
     }
 

@@ -1,4 +1,4 @@
-# EducationOS PDF Reader Prototype
+# Axiom Prototype
 
 A native macOS textbook reader that extracts PDF metadata locally and highlights important text on demand.
 
@@ -18,7 +18,7 @@ PDF text itself is not rewritten in-place. This prototype adds visual yellow PDF
 ## Run it
 
 ```bash
-swift run EducationOSPDFReader
+swift run Axiom
 ```
 
 Then choose **Add Folder** or press `Command-O`, and select a folder containing textbook PDFs. Local page metadata is extracted without AI. Open a textbook and pause on a page to trigger that page's AI highlighting.
@@ -41,7 +41,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-3.5-flash
 ```
 
-After that, run normally with `swift run EducationOSPDFReader`.
+After that, run normally with `swift run Axiom`.
 
 Shell environment variables still work and override `.env` values.
 
@@ -57,10 +57,10 @@ OPENAI_MODEL=gpt-5.2
 
 ## Metadata storage
 
-MathPilot stores textbook, page, highlight, concept, and analysis-job metadata in:
+Axiom stores textbook, page, highlight, concept, and analysis-job metadata in:
 
 ```text
-~/Library/Application Support/MathPilot/mathpilot.sqlite3
+~/Library/Application Support/Axiom/axiom.sqlite3
 ```
 
 The original PDFs remain in their existing filesystem locations.
@@ -70,15 +70,19 @@ The original PDFs remain in their existing filesystem locations.
 Run the non-GUI fixture and cache checks with:
 
 ```bash
-swift run EducationOSPDFReader --verify
+swift run Axiom --verify
 ```
+
+## Uninstall
+
+See [UNINSTALL.md](UNINSTALL.md) for steps to remove the metadata database, caches, logs, API-key file, build output, and source checkout.
 
 ## Debug logging
 
-When running from the project folder, MathPilot writes logs to:
+When running from the project folder, Axiom writes logs to:
 
 ```text
-mathpilot.log
+axiom.log
 ```
 
 The same logs also print in the terminal used for `swift run`. Logs include provider selection, model name, request status, response snippets, JSON decode failures, fallback reasons, and highlight counts. API keys are redacted.
