@@ -38,6 +38,13 @@ enum AxiomVerification {
         )
         check(discovered.count == 9, "Folder discovery found all nine PDF fixtures", failures: &failures)
 
+        do {
+            try await verifyCodexPet()
+            print("PASS Codex pet animation, interaction, and positioning contract")
+        } catch {
+            failures.append("Codex pet: \(error.localizedDescription)")
+        }
+
         if failures.isEmpty {
             print("Verification complete: all checks passed")
             return true
@@ -128,6 +135,120 @@ enum AxiomVerification {
                 throw VerificationError.failed("Page \(pageIndex + 1) was not locally extracted or was unexpectedly AI analyzed.")
             }
         }
+    }
+
+    private static func verifyCodexPet() async throws {
+        let expectedFrameCounts: [CodexPetAnimationState: Int] = [
+            .idle: 6,
+            .runningRight: 8,
+            .runningLeft: 8,
+            .waving: 4,
+            .jumping: 5,
+            .failed: 8,
+            .waiting: 6,
+            .running: 6,
+            .review: 6
+        ]
+        for (state, expectedCount) in expectedFrameCounts {
+            guard CodexPetAnimationContract.standardFrames(for: state).count == expectedCount else {
+                throw VerificationError.failed("\(state.rawValue) has the wrong frame count.")
+            }
+        }
+
+        let atlasIsValid = await MainActor.run {
+            guard CodexPetSprites.isValid else { return false }
+            return CodexPetAnimationState.allCases
+                .flatMap(CodexPetAnimationContract.standardFrames)
+                .allSatisfy {
+                    CodexPetSprites.image(for: $0)?.size == CodexPetAnimationContract.cellSize
+                }
+        }
+        guard atlasIsValid else {
+            throw VerificationError.failed("The 8-by-11 sprite atlas or one of its 57 animation cells is invalid.")
+        }
+
+        let idle = CodexPetAnimationContract.playback(for: .idle, prefersReducedMotion: false)
+        guard idle.loopStartIndex == 0,
+              durations(idle.frames) == [1.68, 0.66, 0.66, 0.84, 0.84, 1.92] else {
+            throw VerificationError.failed("Idle playback does not use Codex's six-times slowdown.")
+        }
+
+        let jumping = CodexPetAnimationContract.playback(for: .jumping, prefersReducedMotion: false)
+        let expectedJumpingFrames = Array(
+            repeating: CodexPetAnimationContract.standardFrames(for: .jumping),
+            count: 3
+        ).flatMap({ $0 })
+        guard jumping.frames.count == 21, jumping.loopStartIndex == 15,
+              Array(jumping.frames.prefix(15)) == expectedJumpingFrames,
+              Array(jumping.frames.suffix(6)) == CodexPetAnimationContract.slowedIdleFrames else {
+            throw VerificationError.failed("Reaction playback does not run three times before settling into idle.")
+        }
+
+        for state in CodexPetAnimationState.allCases {
+            let reducedMotion = CodexPetAnimationContract.playback(for: state, prefersReducedMotion: true)
+            guard reducedMotion.frames == Array(CodexPetAnimationContract.standardFrames(for: state).prefix(1)),
+                  reducedMotion.loopStartIndex == nil else {
+                throw VerificationError.failed("Reduced motion is not a still first frame for \(state.rawValue).")
+            }
+        }
+
+        guard CodexPetAnimationContract.dragState(currentState: nil, horizontalDelta: 3.99) == nil,
+              CodexPetAnimationContract.dragState(currentState: nil, horizontalDelta: 4) == .runningRight,
+              CodexPetAnimationContract.dragState(currentState: .runningRight, horizontalDelta: -4) == .runningLeft,
+              CodexPetAnimationContract.dragState(currentState: .runningLeft, horizontalDelta: 0) == .runningLeft,
+              CodexPetAnimationContract.effectiveState(activityState: .failed, isHovered: true, dragState: nil) == .jumping,
+              CodexPetAnimationContract.effectiveState(activityState: .failed, isHovered: true, dragState: .runningRight) == .runningRight else {
+            throw VerificationError.failed("Hover and drag state precedence does not match Codex.")
+        }
+
+        let mascotBounds = NSRect(x: 0, y: 0, width: 112, height: 121)
+        guard CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 56, y: 122), spriteVersionNumber: 2)
+                == CodexPetFrame(rowIndex: 9, columnIndex: 0, frameDuration: 0),
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 113, y: 60.5), spriteVersionNumber: 2)
+                == CodexPetFrame(rowIndex: 9, columnIndex: 4, frameDuration: 0),
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 56, y: -1), spriteVersionNumber: 2)
+                == CodexPetFrame(rowIndex: 10, columnIndex: 0, frameDuration: 0),
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: -1, y: 60.5), spriteVersionNumber: 2)
+                == CodexPetFrame(rowIndex: 10, columnIndex: 4, frameDuration: 0),
+              CodexPetLookDirection.frame(mascotBounds: mascotBounds, point: NSPoint(x: 56, y: 60.5), spriteVersionNumber: 2) == nil else {
+            throw VerificationError.failed("The 16-direction look row mapping is incorrect.")
+        }
+
+        let movementBounds = NSRect(x: 10, y: 20, width: 500, height: 400)
+        let position = CodexPetNormalizedPosition(x: 0.35, y: 0.7)
+        let frame = CodexPetPositioning.frame(
+            in: movementBounds,
+            size: NSSize(
+                width: 112,
+                height: 112 * CodexPetAnimationContract.cellSize.height / CodexPetAnimationContract.cellSize.width
+            ),
+            normalizedPosition: position
+        )
+        let roundTrip = CodexPetPositioning.normalizedPosition(for: frame, in: movementBounds)
+        let outOfBounds = NSRect(x: -200, y: 900, width: frame.width, height: frame.height)
+        let clamped = CodexPetPositioning.clampedOrigin(for: outOfBounds, in: movementBounds)
+        let defaultsSuite = "axiom-pet-verify-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: defaultsSuite) else {
+            throw VerificationError.failed("A temporary defaults suite could not be created.")
+        }
+        defer { defaults.removePersistentDomain(forName: defaultsSuite) }
+        CodexPetPositionStore.save(position, defaults: defaults)
+        let restoredPosition = CodexPetPositionStore.load(defaults: defaults)
+        guard approximatelyEqual(roundTrip.x, position.x),
+              approximatelyEqual(roundTrip.y, position.y),
+              restoredPosition == position,
+              clamped.x == movementBounds.minX,
+              clamped.y == movementBounds.maxY - outOfBounds.height else {
+            throw VerificationError.failed("Saved or clamped drag positioning is incorrect.")
+        }
+    }
+
+    private static func durations(_ frames: [CodexPetFrame]) -> [TimeInterval] {
+        frames.map { ($0.frameDuration * 100).rounded() / 100 }
+    }
+
+    private static func approximatelyEqual(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
+        abs(lhs - rhs) < 0.000_001
     }
 
     private static func check(_ condition: Bool, _ name: String, failures: inout [String]) {

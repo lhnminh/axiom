@@ -1,0 +1,7 @@
+{
+  "id": "codex",
+  "displayName": "Codex",
+  "description": "The built-in Codex pet extracted from the Codex app.",
+  "spriteVersionNumber": 2,
+  "spritesheetPath": "spritesheet.webp"
+}

@@ -383,6 +383,7 @@ final class ReaderViewController: NSViewController {
     private let analyzer: ConfiguredMathAnalyzer
     private let onBack: () -> Void
     private let pdfView = PDFView()
+    private let petOverlay = PetOverlayView()
     private let sidebar = NSTextView()
     private let statusLabel = NSTextField(labelWithString: "Opening textbook...")
     private var document: PDFDocument?
@@ -391,6 +392,7 @@ final class ReaderViewController: NSViewController {
     private var pendingPageIndex: Int?
     private var currentPageIndex = 0
     private var securityScopedURL: URL?
+    private var petPosition = CodexPetPositionStore.load()
 
     init(textbook: TextbookSummary, store: TextbookStore, analyzer: ConfiguredMathAnalyzer, onBack: @escaping () -> Void) {
         self.textbook = textbook
@@ -426,7 +428,9 @@ final class ReaderViewController: NSViewController {
         sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(toolbar)
         root.addSubview(pdfView)
+        root.addSubview(petOverlay)
         root.addSubview(sidebarScroll)
+        petOverlay.frame.size = PetOverlayView.defaultSize
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: root.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -443,6 +447,17 @@ final class ReaderViewController: NSViewController {
             sidebarScroll.widthAnchor.constraint(equalToConstant: 360)
         ])
         view = root
+        petOverlay.configureDragging(
+            movementBoundsProvider: { [weak self] in self?.petMovementBounds ?? .zero },
+            onDragEnded: { [weak self] frame in
+                guard let self else { return }
+                self.petPosition = CodexPetPositioning.normalizedPosition(
+                    for: frame,
+                    in: self.petMovementBounds
+                )
+                CodexPetPositionStore.save(self.petPosition)
+            }
+        )
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(pageChanged),
@@ -450,6 +465,20 @@ final class ReaderViewController: NSViewController {
             object: pdfView
         )
         openTextbook()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard !petOverlay.isDragging else { return }
+        petOverlay.frame = CodexPetPositioning.frame(
+            in: petMovementBounds,
+            size: PetOverlayView.defaultSize,
+            normalizedPosition: petPosition
+        )
+    }
+
+    private var petMovementBounds: NSRect {
+        pdfView.frame.insetBy(dx: 8, dy: 8)
     }
 
     private func makeToolbar() -> NSView {
@@ -486,12 +515,14 @@ final class ReaderViewController: NSViewController {
 
     private func openTextbook() {
         guard let url = TextbookURLResolver.resolve(textbook) else {
+            petOverlay.setActivityState(.failed)
             statusLabel.stringValue = "The original PDF is unavailable. Return to Library and locate it."
             renderSidebar(status: "Unavailable", passages: [], note: "The referenced PDF could not be opened.")
             return
         }
         let didAccess = url.startAccessingSecurityScopedResource()
         guard let document = PDFDocument(url: url) else {
+            petOverlay.setActivityState(.failed)
             if didAccess { url.stopAccessingSecurityScopedResource() }
             statusLabel.stringValue = "The original PDF could not be opened."
             renderSidebar(status: "Unavailable", passages: [], note: "PDFKit could not open the referenced file.")
@@ -502,6 +533,7 @@ final class ReaderViewController: NSViewController {
         pdfView.document = document
         pdfView.autoScales = true
         statusLabel.stringValue = "\(textbook.displayName) - page 1 of \(document.pageCount)"
+        petOverlay.setActivityState(.idle)
         renderSidebar(status: "Not analyzed", passages: [], note: "AI runs only when this page is visible.")
         scheduleCurrentPage()
     }
@@ -516,6 +548,7 @@ final class ReaderViewController: NSViewController {
     private func scheduleCurrentPage() {
         pageDebounceTask?.cancel()
         let pageIndex = currentPageIndex
+        petOverlay.setActivityState(.idle)
         renderSidebar(status: "Checking cache", passages: [], note: "Page \(pageIndex + 1) will be analyzed only if no valid cached result exists.")
         pageDebounceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(450))
@@ -547,33 +580,54 @@ final class ReaderViewController: NSViewController {
             switch cache {
             case let .ready(highlights):
                 AxiomLogger.info("Page cache hit. textbookID=\(textbook.id), page=\(pageIndex + 1), highlights=\(highlights.count)")
-                if currentPageIndex == pageIndex { render(highlights.map(\.passage), status: highlights.isEmpty ? "No highlights found" : "Highlighted", note: "Loaded from local metadata cache.") }
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.review)
+                    render(highlights.map(\.passage), status: highlights.isEmpty ? "No highlights found" : "Highlighted", note: "Loaded from local metadata cache.")
+                }
                 return
             case let .failed(message):
-                if currentPageIndex == pageIndex { renderSidebar(status: "Failed", passages: [], note: message) }
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.failed)
+                    renderSidebar(status: "Failed", passages: [], note: message)
+                }
                 return
             case .analyzing:
-                if currentPageIndex == pageIndex { renderSidebar(status: "Analyzing", passages: [], note: "This page analysis is already running.") }
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.running)
+                    renderSidebar(status: "Analyzing", passages: [], note: "This page analysis is already running.")
+                }
                 return
             case .missing:
                 AxiomLogger.info("Page cache miss. textbookID=\(textbook.id), page=\(pageIndex + 1), reason=missing_or_invalid_identity")
             }
 
             guard analyzer.isConfigured else {
-                if currentPageIndex == pageIndex { renderSidebar(status: "Not analyzed", passages: [], note: analyzer.missingConfigurationMessage) }
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.waiting)
+                    renderSidebar(status: "Not analyzed", passages: [], note: analyzer.missingConfigurationMessage)
+                }
                 return
             }
             guard let page = try await ensureStoredPage(pageIndex) else {
-                if currentPageIndex == pageIndex { renderSidebar(status: "Not analyzed", passages: [], note: "Local text metadata is not available for this page.") }
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.waiting)
+                    renderSidebar(status: "Not analyzed", passages: [], note: "Local text metadata is not available for this page.")
+                }
                 return
             }
             guard page.extractionStatus == "ready", !page.text.isEmpty else {
-                if currentPageIndex == pageIndex { renderSidebar(status: "OCR required", passages: [], note: "This page has no embedded text.") }
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.waiting)
+                    renderSidebar(status: "OCR required", passages: [], note: "This page has no embedded text.")
+                }
                 return
             }
 
             try await store.markAnalyzing(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity)
-            if currentPageIndex == pageIndex { renderSidebar(status: "Analyzing", passages: [], note: "\(analyzer.providerName) is selecting important text from page \(pageIndex + 1).") }
+            if currentPageIndex == pageIndex {
+                petOverlay.setActivityState(.running)
+                renderSidebar(status: "Analyzing", passages: [], note: "\(analyzer.providerName) is selecting important text from page \(pageIndex + 1).")
+            }
             let passages = try await analyzeWithRetry(page: PageText(pageIndex: pageIndex, text: page.text))
             let persistStarted = ContinuousClock.now
             try await store.saveAnalysis(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity, passages: passages)
@@ -581,12 +635,16 @@ final class ReaderViewController: NSViewController {
                 "Page analysis persisted. textbookID=\(textbook.id), page=\(pageIndex + 1), passages=\(passages.count), durationMs=\(AxiomLogger.durationMilliseconds(since: persistStarted))"
             )
             if currentPageIndex == pageIndex {
+                petOverlay.setActivityState(.review)
                 render(passages, status: passages.isEmpty ? "No highlights found" : "Highlighted", note: "Saved to the local metadata cache.")
             }
         } catch {
             try? await store.failAnalysis(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity, error: error.localizedDescription)
             AxiomLogger.error("Page analysis failed. textbookID=\(textbook.id), page=\(pageIndex + 1), error=\(error.localizedDescription)")
-            if currentPageIndex == pageIndex { renderSidebar(status: "Failed", passages: [], note: error.localizedDescription) }
+            if currentPageIndex == pageIndex {
+                petOverlay.setActivityState(.failed)
+                renderSidebar(status: "Failed", passages: [], note: error.localizedDescription)
+            }
         }
     }
 
@@ -664,6 +722,7 @@ final class ReaderViewController: NSViewController {
 
     @objc private func retryPage() {
         let pageIndex = currentPageIndex
+        petOverlay.setActivityState(.running)
         Task {
             try? await store.clearAnalysis(textbookID: textbook.id, pageIndex: pageIndex)
             enqueue(pageIndex)

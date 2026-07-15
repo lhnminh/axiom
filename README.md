@@ -12,6 +12,7 @@ A native macOS textbook reader that extracts PDF metadata locally and highlights
 - Calls AI only for the current page after the reader scrolls to it.
 - Caches page results in SQLite so the same unchanged page is not analyzed twice.
 - Adds yellow highlight annotations directly on top of important text and keeps the right sidebar.
+- Shows the bundled Codex pet over the PDF reader with Codex-matched idle, hover, drag, and activity animations.
 
 PDF text itself is not rewritten in-place. This prototype adds visual yellow PDF annotations over text that the configured AI considers important.
 
@@ -24,6 +25,14 @@ swift run Axiom
 Then choose **Add Folder** or press `Command-O`, and select a folder containing textbook PDFs. Local page metadata is extracted without AI. Open a textbook and pause on a page to trigger that page's AI highlighting.
 
 This SwiftPM prototype is not packaged as a Finder-registered `.app` yet. Double-clicking a PDF in Finder will still open your default PDF app.
+
+## Pet overlay
+
+The reader displays the 112-point Codex pet over the PDF viewer. Its six-frame idle uses the same per-frame timings and six-times idle slowdown as Codex Pets, so it pauses naturally instead of cycling through the spritesheet continuously.
+
+Hovering makes the pet jump. Dragging shrinks it to 95%, switches between the left- and right-running rows after the same four-point movement threshold, clamps it inside the PDF viewer, and saves its normalized position. Analysis activity uses the Codex running, waiting, failed, and review reactions; each reaction plays three times and then settles into the slowed idle. macOS Reduce Motion displays only the first frame of each state.
+
+The pet itself does not start an action when clicked. Dismiss, disable, chat, and multiple-pet controls are not part of this implementation.
 
 ## AI setup
 
