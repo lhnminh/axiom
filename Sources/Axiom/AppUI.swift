@@ -385,7 +385,9 @@ final class ReaderViewController: NSViewController {
     private let pdfView = PDFView()
     private let petOverlay = PetOverlayView()
     private let sidebar = NSTextView()
-    private let statusLabel = NSTextField(labelWithString: "Opening textbook...")
+    private let pageLabel = NSTextField(labelWithString: "Opening textbook...")
+    private let previousPageButton = NSButton()
+    private let nextPageButton = NSButton()
     private var document: PDFDocument?
     private var pageDebounceTask: Task<Void, Never>?
     private var analysisWorker: Task<Void, Never>?
@@ -411,11 +413,23 @@ final class ReaderViewController: NSViewController {
 
     override func loadView() {
         let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor(
+            calibratedRed: 0.055,
+            green: 0.061,
+            blue: 0.075,
+            alpha: 1
+        ).cgColor
         let toolbar = makeToolbar()
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+        pdfView.backgroundColor = NSColor(
+            calibratedRed: 0.055,
+            green: 0.061,
+            blue: 0.075,
+            alpha: 1
+        )
         pdfView.translatesAutoresizingMaskIntoConstraints = false
         sidebar.isEditable = false
         sidebar.drawsBackground = true
@@ -485,38 +499,132 @@ final class ReaderViewController: NSViewController {
         let toolbar = NSView()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
-        toolbar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        toolbar.layer?.backgroundColor = NSColor(
+            calibratedRed: 0.095,
+            green: 0.105,
+            blue: 0.125,
+            alpha: 1
+        ).cgColor
+        toolbar.appearance = NSAppearance(named: .darkAqua)
+
+        let appName = NSTextField(labelWithString: "Axiom")
+        appName.font = .systemFont(ofSize: 16, weight: .bold)
+        appName.textColor = NSColor(calibratedWhite: 0.88, alpha: 1)
+        appName.translatesAutoresizingMaskIntoConstraints = false
+
         let back = NSButton(title: "Library", target: self, action: #selector(backAction))
-        back.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back to library")
+        back.image = NSImage(systemSymbolName: "books.vertical", accessibilityDescription: "Back to library")
         back.imagePosition = .imageLeading
-        back.bezelStyle = .rounded
+        back.bezelStyle = .texturedRounded
+        back.contentTintColor = .white
         back.translatesAutoresizingMaskIntoConstraints = false
-        let retry = NSButton(title: "Retry Page", target: self, action: #selector(retryPage))
-        retry.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Retry page")
-        retry.imagePosition = .imageLeading
-        retry.bezelStyle = .rounded
-        retry.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.lineBreakMode = .byTruncatingMiddle
-        toolbar.addSubview(back)
-        toolbar.addSubview(retry)
-        toolbar.addSubview(statusLabel)
+
+        let bookTitle = NSTextField(labelWithString: textbook.displayName)
+        bookTitle.font = .systemFont(ofSize: 15, weight: .medium)
+        bookTitle.textColor = NSColor(calibratedWhite: 0.94, alpha: 1)
+        bookTitle.alignment = .center
+        bookTitle.lineBreakMode = .byTruncatingMiddle
+        bookTitle.translatesAutoresizingMaskIntoConstraints = false
+
+        configureToolbarIconButton(
+            previousPageButton,
+            symbolName: "chevron.left",
+            accessibilityDescription: "Previous page",
+            action: #selector(previousPage)
+        )
+        configureToolbarIconButton(
+            nextPageButton,
+            symbolName: "chevron.right",
+            accessibilityDescription: "Next page",
+            action: #selector(nextPage)
+        )
+
+        pageLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        pageLabel.textColor = NSColor(calibratedWhite: 0.90, alpha: 1)
+        pageLabel.alignment = .center
+        pageLabel.lineBreakMode = .byTruncatingTail
+        pageLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let retry = NSButton()
+        configureToolbarIconButton(
+            retry,
+            symbolName: "arrow.clockwise",
+            accessibilityDescription: "Refresh page analysis",
+            action: #selector(retryPage)
+        )
+        retry.toolTip = "Refresh page analysis"
+
+        let leftGroup = NSStackView(views: [appName, back])
+        leftGroup.orientation = .horizontal
+        leftGroup.alignment = .centerY
+        leftGroup.spacing = 18
+        leftGroup.translatesAutoresizingMaskIntoConstraints = false
+
+        let pageControls = NSStackView(views: [previousPageButton, pageLabel, nextPageButton, retry])
+        pageControls.orientation = .horizontal
+        pageControls.alignment = .centerY
+        pageControls.spacing = 8
+        pageControls.translatesAutoresizingMaskIntoConstraints = false
+
+        toolbar.addSubview(leftGroup)
+        toolbar.addSubview(bookTitle)
+        toolbar.addSubview(pageControls)
         NSLayoutConstraint.activate([
-            back.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 14),
-            back.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            retry.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 8),
-            retry.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(equalTo: retry.trailingAnchor, constant: 14),
-            statusLabel.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -14),
-            statusLabel.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor)
+            leftGroup.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 20),
+            leftGroup.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            leftGroup.widthAnchor.constraint(lessThanOrEqualToConstant: 250),
+
+            bookTitle.centerXAnchor.constraint(equalTo: toolbar.centerXAnchor),
+            bookTitle.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            bookTitle.leadingAnchor.constraint(greaterThanOrEqualTo: leftGroup.trailingAnchor, constant: 24),
+            bookTitle.trailingAnchor.constraint(lessThanOrEqualTo: pageControls.leadingAnchor, constant: -24),
+
+            pageControls.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -20),
+            pageControls.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            pageLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
+            previousPageButton.widthAnchor.constraint(equalToConstant: 34),
+            nextPageButton.widthAnchor.constraint(equalToConstant: 34),
+            retry.widthAnchor.constraint(equalToConstant: 34)
         ])
+        updatePageControls()
         return toolbar
+    }
+
+    private func configureToolbarIconButton(
+        _ button: NSButton,
+        symbolName: String,
+        accessibilityDescription: String,
+        action: Selector
+    ) {
+        button.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: accessibilityDescription
+        )
+        button.imagePosition = .imageOnly
+        button.bezelStyle = .texturedRounded
+        button.contentTintColor = .white
+        button.target = self
+        button.action = action
+        button.toolTip = accessibilityDescription
+        button.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private func updatePageControls() {
+        guard let document else {
+            pageLabel.stringValue = "Opening textbook..."
+            previousPageButton.isEnabled = false
+            nextPageButton.isEnabled = false
+            return
+        }
+        pageLabel.stringValue = "Page \(currentPageIndex + 1) of \(document.pageCount)"
+        previousPageButton.isEnabled = currentPageIndex > 0
+        nextPageButton.isEnabled = currentPageIndex + 1 < document.pageCount
     }
 
     private func openTextbook() {
         guard let url = TextbookURLResolver.resolve(textbook) else {
             petOverlay.setActivityState(.failed)
-            statusLabel.stringValue = "The original PDF is unavailable. Return to Library and locate it."
+            pageLabel.stringValue = "Unavailable"
             renderSidebar(status: "Unavailable", passages: [], note: "The referenced PDF could not be opened.")
             return
         }
@@ -524,7 +632,7 @@ final class ReaderViewController: NSViewController {
         guard let document = PDFDocument(url: url) else {
             petOverlay.setActivityState(.failed)
             if didAccess { url.stopAccessingSecurityScopedResource() }
-            statusLabel.stringValue = "The original PDF could not be opened."
+            pageLabel.stringValue = "Unavailable"
             renderSidebar(status: "Unavailable", passages: [], note: "PDFKit could not open the referenced file.")
             return
         }
@@ -532,7 +640,7 @@ final class ReaderViewController: NSViewController {
         self.document = document
         pdfView.document = document
         pdfView.autoScales = true
-        statusLabel.stringValue = "\(textbook.displayName) - page 1 of \(document.pageCount)"
+        updatePageControls()
         petOverlay.setActivityState(.idle)
         renderSidebar(status: "Not analyzed", passages: [], note: "AI runs only when this page is visible.")
         scheduleCurrentPage()
@@ -541,7 +649,7 @@ final class ReaderViewController: NSViewController {
     @objc private func pageChanged() {
         guard let document, let currentPage = pdfView.currentPage else { return }
         currentPageIndex = document.index(for: currentPage)
-        statusLabel.stringValue = "\(textbook.displayName) - page \(currentPageIndex + 1) of \(document.pageCount)"
+        updatePageControls()
         scheduleCurrentPage()
     }
 
@@ -698,9 +806,6 @@ final class ReaderViewController: NSViewController {
     }
 
     private func renderSidebar(status: String, passages: [ImportantPassage], note: String) {
-        if let document {
-            statusLabel.stringValue = "\(textbook.displayName) - page \(currentPageIndex + 1) of \(document.pageCount) - \(status)"
-        }
         let content = NSMutableAttributedString()
         content.append(NSAttributedString(string: "Page \(currentPageIndex + 1)\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
         content.append(NSAttributedString(string: "\(status)\n\n", attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor]))
@@ -727,6 +832,19 @@ final class ReaderViewController: NSViewController {
             try? await store.clearAnalysis(textbookID: textbook.id, pageIndex: pageIndex)
             enqueue(pageIndex)
         }
+    }
+
+    @objc private func previousPage() {
+        goToPage(at: currentPageIndex - 1)
+    }
+
+    @objc private func nextPage() {
+        goToPage(at: currentPageIndex + 1)
+    }
+
+    private func goToPage(at index: Int) {
+        guard let document, let page = document.page(at: index) else { return }
+        pdfView.go(to: page)
     }
 
     @objc private func backAction() { onBack() }
