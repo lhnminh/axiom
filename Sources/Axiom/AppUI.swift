@@ -802,11 +802,14 @@ final class ReaderViewController: NSViewController {
     private let nextPageButton = NSButton()
     private var document: PDFDocument?
     private var pageDebounceTask: Task<Void, Never>?
+    private var viewportRefreshTask: Task<Void, Never>?
     private var analysisWorker: Task<Void, Never>?
     private var pendingPageIndex: Int?
+    private var processingPageIndex: Int?
     private var currentPageIndex = 0
     private var securityScopedURL: URL?
     private var petPosition = CodexPetPositionStore.load()
+    private var revealedHighlightKeys: [Int: Set<String>] = [:]
 
     init(textbook: TextbookSummary, store: TextbookStore, analyzer: ConfiguredMathAnalyzer, onBack: @escaping () -> Void) {
         self.textbook = textbook
@@ -896,7 +899,9 @@ final class ReaderViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        guard !petOverlay.isDragging else { return }
+        // The pet's highlight pass owns its frame while it travels across the page.
+        // Do not snap it back to its saved resting position during a layout pass.
+        guard !petOverlay.isDragging, !petOverlay.isPerformingHighlightPass else { return }
         petOverlay.frame = CodexPetPositioning.frame(
             in: petMovementBounds,
             size: PetOverlayView.defaultSize,
@@ -1051,6 +1056,8 @@ final class ReaderViewController: NSViewController {
         self.document = document
         pdfView.document = document
         pdfView.autoScales = true
+        beginObservingViewport()
+        statusLabel.stringValue = "\(textbook.displayName) - page 1 of \(document.pageCount)"
         updatePageControls()
         petOverlay.setActivityState(.idle)
         renderSidebar(status: "Not analyzed", passages: [], note: "AI runs only when this page is visible.")
@@ -1060,19 +1067,59 @@ final class ReaderViewController: NSViewController {
     @objc private func pageChanged() {
         guard let document, let currentPage = pdfView.currentPage else { return }
         currentPageIndex = document.index(for: currentPage)
+        statusLabel.stringValue = "\(textbook.displayName) - page \(currentPageIndex + 1) of \(document.pageCount)"
+        // Page changes often fire repeatedly during a fast continuous scroll. Let the
+        // viewport settle before retargeting the pet rather than restarting its walk.
+        scheduleCurrentPage(after: 500)
         updatePageControls()
         scheduleCurrentPage()
     }
 
-    private func scheduleCurrentPage() {
+    private func scheduleCurrentPage(after milliseconds: Int = 250) {
         pageDebounceTask?.cancel()
         let pageIndex = currentPageIndex
+        // The reader only needs an answer for the visible page. Cancelling stale work both
+        // makes page turns feel immediate and avoids spending a limited API request on a page
+        // the reader has already left.
+        if let processingPageIndex, processingPageIndex != pageIndex {
+            analysisWorker?.cancel()
+        }
         petOverlay.setActivityState(.idle)
         renderSidebar(status: "Checking cache", passages: [], note: "Page \(pageIndex + 1) will be analyzed only if no valid cached result exists.")
         pageDebounceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(450))
+            try? await Task.sleep(for: .milliseconds(milliseconds))
             guard !Task.isCancelled, let self else { return }
+            // Cancel once, immediately before starting the new settled viewport pass.
+            // Doing this at every scroll tick caused the pet to flicker and restart.
+            self.petOverlay.cancelHighlightPass()
             self.enqueue(pageIndex)
+        }
+    }
+
+    private func beginObservingViewport() {
+        NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
+        guard let clipView = pdfView.documentView?.enclosingScrollView?.contentView else { return }
+        clipView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(viewportDidChangeNotification),
+            name: NSView.boundsDidChangeNotification,
+            object: clipView
+        )
+    }
+
+    @objc private func viewportDidChangeNotification(_ notification: Notification) {
+        viewportDidChange()
+    }
+
+    private func viewportDidChange() {
+        viewportRefreshTask?.cancel()
+        viewportRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self else { return }
+            // Re-evaluate only after the reader settles, so the pet never chases a
+            // stale coordinate while the PDF is still moving beneath it.
+            self.scheduleCurrentPage(after: 250)
         }
     }
 
@@ -1083,7 +1130,18 @@ final class ReaderViewController: NSViewController {
             guard let self else { return }
             while let pageIndex = self.pendingPageIndex {
                 self.pendingPageIndex = nil
+                self.processingPageIndex = pageIndex
                 await self.process(pageIndex: pageIndex)
+                self.processingPageIndex = nil
+                // A cancelled worker must not be reused: cancellation is sticky for the
+                // lifetime of a Swift Task. Start a fresh worker for the latest pending page.
+                if Task.isCancelled {
+                    self.analysisWorker = nil
+                    if let pendingPageIndex = self.pendingPageIndex {
+                        self.enqueue(pendingPageIndex)
+                    }
+                    return
+                }
             }
             self.analysisWorker = nil
         }
@@ -1100,8 +1158,11 @@ final class ReaderViewController: NSViewController {
             case let .ready(highlights):
                 AxiomLogger.info("Page cache hit. textbookID=\(textbook.id), page=\(pageIndex + 1), highlights=\(highlights.count)")
                 if currentPageIndex == pageIndex {
-                    petOverlay.setActivityState(.review)
-                    render(highlights.map(\.passage), status: highlights.isEmpty ? "No highlights found" : "Highlighted", note: "Loaded from local metadata cache.")
+                    revealHighlights(
+                        highlights.map(\.passage),
+                        status: highlights.isEmpty ? "No highlights found" : "Highlighted",
+                        note: "Codex is marking the important parts from left to right."
+                    )
                 }
                 return
             case let .failed(message):
@@ -1143,6 +1204,7 @@ final class ReaderViewController: NSViewController {
             }
 
             try await store.markAnalyzing(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity)
+            clearRenderedHighlights(on: pageIndex)
             if currentPageIndex == pageIndex {
                 petOverlay.setActivityState(.running)
                 renderSidebar(status: "Analyzing", passages: [], note: "\(analyzer.providerName) is selecting important text from page \(pageIndex + 1).")
@@ -1154,10 +1216,27 @@ final class ReaderViewController: NSViewController {
                 "Page analysis persisted. textbookID=\(textbook.id), page=\(pageIndex + 1), passages=\(passages.count), durationMs=\(AxiomLogger.durationMilliseconds(since: persistStarted))"
             )
             if currentPageIndex == pageIndex {
-                petOverlay.setActivityState(.review)
-                render(passages, status: passages.isEmpty ? "No highlights found" : "Highlighted", note: "Saved to the local metadata cache.")
+                revealHighlights(
+                    passages,
+                    status: passages.isEmpty ? "No highlights found" : "Highlighted",
+                    note: "Codex is marking the important parts from left to right."
+                )
             }
         } catch {
+            if Task.isCancelled {
+                try? await store.clearAnalysis(textbookID: textbook.id, pageIndex: pageIndex)
+                AxiomLogger.info("Cancelled stale page analysis. textbookID=\(textbook.id), page=\(pageIndex + 1)")
+                return
+            }
+            if let error = error as? RemoteAnalyzerError, error.isRateLimited {
+                try? await store.clearAnalysis(textbookID: textbook.id, pageIndex: pageIndex)
+                AxiomLogger.info("Page analysis deferred by provider rate limit. textbookID=\(textbook.id), page=\(pageIndex + 1)")
+                if currentPageIndex == pageIndex {
+                    petOverlay.setActivityState(.waiting)
+                    renderSidebar(status: "Rate limited", passages: [], note: error.localizedDescription)
+                }
+                return
+            }
             try? await store.failAnalysis(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity, error: error.localizedDescription)
             AxiomLogger.error("Page analysis failed. textbookID=\(textbook.id), page=\(pageIndex + 1), error=\(error.localizedDescription)")
             if currentPageIndex == pageIndex {
@@ -1183,9 +1262,9 @@ final class ReaderViewController: NSViewController {
         while true {
             do {
                 return try await analyzer.passages(page: page)
-            } catch let error as RemoteAnalyzerError where error.isRetryable && attempt < 2 {
+            } catch let error as RemoteAnalyzerError where error.isRetryable && attempt < 1 {
                 attempt += 1
-                let delay = attempt == 1 ? 1 : 2
+                let delay = 2
                 AxiomLogger.info("Retrying page analysis. page=\(page.pageIndex + 1), attempt=\(attempt + 1), delaySeconds=\(delay)")
                 try await Task.sleep(for: .seconds(delay))
             }
@@ -1200,20 +1279,93 @@ final class ReaderViewController: NSViewController {
         }
         var annotationCount = 0
         for passage in passages where passage.pageIndex == currentPageIndex {
-            guard let selection = page.selection(for: passage.range) else { continue }
-            for line in selection.selectionsByLine() {
-                let annotation = PDFAnnotation(bounds: line.bounds(for: page).insetBy(dx: -2, dy: -1), forType: .highlight, withProperties: nil)
-                annotation.color = NSColor.systemYellow.withAlphaComponent(0.55)
-                annotation.userName = "AxiomAutoHighlight"
-                page.addAnnotation(annotation)
-                annotationCount += 1
-            }
+            annotationCount += addAnnotations(for: passage, on: page)
         }
         pdfView.setNeedsDisplay(pdfView.bounds)
         AxiomLogger.info(
             "Page annotations rendered. page=\(currentPageIndex + 1), passages=\(passages.count), annotations=\(annotationCount), durationMs=\(AxiomLogger.durationMilliseconds(since: renderStarted))"
         )
         renderSidebar(status: status, passages: passages, note: note)
+    }
+
+    private func revealHighlights(_ passages: [ImportantPassage], status: String, note: String) {
+        guard let document, let page = document.page(at: currentPageIndex) else { return }
+        guard !passages.isEmpty else {
+            petOverlay.setActivityState(.review)
+            render(passages, status: status, note: note)
+            return
+        }
+
+        let pageIndex = currentPageIndex
+        let ordered = passages
+            .filter { $0.pageIndex == pageIndex }
+            .sorted { lhs, rhs in
+                let lhsBounds = page.selection(for: lhs.range)?.bounds(for: page) ?? .zero
+                let rhsBounds = page.selection(for: rhs.range)?.bounds(for: page) ?? .zero
+                return lhsBounds.maxY == rhsBounds.maxY ? lhsBounds.minX < rhsBounds.minX : lhsBounds.maxY > rhsBounds.maxY
+            }
+        let candidates = ordered.compactMap { passage -> (passage: ImportantPassage, target: NSPoint)? in
+            let pageBounds = page.selection(for: passage.range)?.bounds(for: page) ?? .zero
+            let pdfViewBounds = pdfView.convert(pageBounds, from: page)
+            guard pdfView.visibleRect.intersects(pdfViewBounds),
+                  !revealedHighlightKeys[pageIndex, default: []].contains(highlightKey(for: passage)) else {
+                return nil
+            }
+            let readerBounds = pdfView.convert(pdfViewBounds, to: view)
+            return (passage, NSPoint(x: readerBounds.midX, y: readerBounds.midY))
+        }
+        guard !candidates.isEmpty else {
+            petOverlay.setActivityState(.idle)
+            renderSidebar(status: "Watching your place", passages: passages, note: "Scroll to an unmarked important passage and Codex will meet you there.")
+            return
+        }
+        renderSidebar(status: "Codex highlighting", passages: [], note: note)
+        let targetProvider: (Int) -> NSPoint? = { [weak self] index in
+            guard let self, candidates.indices.contains(index) else { return nil }
+            let passage = candidates[index].passage
+            let pageBounds = page.selection(for: passage.range)?.bounds(for: page) ?? .zero
+            let pdfViewBounds = self.pdfView.convert(pageBounds, from: page)
+            guard self.pdfView.visibleRect.intersects(pdfViewBounds) else { return nil }
+            let readerBounds = self.pdfView.convert(pdfViewBounds, to: self.view)
+            return NSPoint(x: readerBounds.midX, y: readerBounds.midY)
+        }
+        petOverlay.performHighlightPass(to: candidates.map(\.target), in: petMovementBounds, targetProvider: targetProvider, onArrival: { [weak self] index in
+            guard let self, self.currentPageIndex == pageIndex else { return }
+            guard candidates.indices.contains(index) else { return }
+            let passage = candidates[index].passage
+            _ = self.addAnnotations(for: passage, on: page)
+            self.revealedHighlightKeys[pageIndex, default: []].insert(self.highlightKey(for: passage))
+            self.pdfView.setNeedsDisplay(self.pdfView.bounds)
+        }, completion: { [weak self] in
+            guard let self, self.currentPageIndex == pageIndex else { return }
+            self.renderSidebar(status: status, passages: passages, note: "Saved to the local metadata cache.")
+        })
+    }
+
+    @discardableResult
+    private func addAnnotations(for passage: ImportantPassage, on page: PDFPage) -> Int {
+        guard let selection = page.selection(for: passage.range) else { return 0 }
+        var count = 0
+        for line in selection.selectionsByLine() {
+            let annotation = PDFAnnotation(bounds: line.bounds(for: page).insetBy(dx: -2, dy: -1), forType: .highlight, withProperties: nil)
+            annotation.color = NSColor.systemYellow.withAlphaComponent(0.55)
+            annotation.userName = "AxiomAutoHighlight"
+            page.addAnnotation(annotation)
+            count += 1
+        }
+        return count
+    }
+
+    private func highlightKey(for passage: ImportantPassage) -> String {
+        "\(passage.range.location):\(passage.range.length):\(passage.kind)"
+    }
+
+    private func clearRenderedHighlights(on pageIndex: Int) {
+        revealedHighlightKeys[pageIndex] = []
+        guard let page = document?.page(at: pageIndex) else { return }
+        for annotation in page.annotations where annotation.userName == "AxiomAutoHighlight" {
+            page.removeAnnotation(annotation)
+        }
     }
 
     private func renderSidebar(status: String, passages: [ImportantPassage], note: String) {
@@ -1241,6 +1393,7 @@ final class ReaderViewController: NSViewController {
         petOverlay.setActivityState(.running)
         Task {
             try? await store.clearAnalysis(textbookID: textbook.id, pageIndex: pageIndex)
+            clearRenderedHighlights(on: pageIndex)
             enqueue(pageIndex)
         }
     }

@@ -75,7 +75,7 @@ struct StoredHighlight: Sendable {
 }
 
 struct AnalysisIdentity: Sendable {
-    static let promptVersion = "page-highlights-v1"
+    static let promptVersion = "page-highlights-v2"
 
     let provider: String
     let model: String
@@ -105,6 +105,7 @@ enum TextFingerprint {
 enum RemoteAnalyzerError: Error {
     case missingAPIKey
     case invalidURL
+    case rateLimited(retryAfterSeconds: Int)
     case invalidResponse(statusCode: Int, body: String)
     case missingOutputText(body: String)
     case outputDecodeFailed(String)
@@ -117,6 +118,8 @@ extension RemoteAnalyzerError: LocalizedError {
             "Missing API key."
         case .invalidURL:
             "Invalid API URL."
+        case let .rateLimited(retryAfterSeconds):
+            "Gemini is rate limited. Wait about \(retryAfterSeconds) seconds before retrying this page."
         case let .invalidResponse(statusCode, body):
             "HTTP \(statusCode): \(body)"
         case let .missingOutputText(body):
@@ -129,9 +132,28 @@ extension RemoteAnalyzerError: LocalizedError {
     var isRetryable: Bool {
         switch self {
         case let .invalidResponse(statusCode, _):
-            statusCode == 429 || (500...599).contains(statusCode)
+            // Retrying a quota response immediately consumes more requests and makes the
+            // user wait longer. The UI exposes Retry Page for a deliberate later attempt.
+            return (500...599).contains(statusCode)
         default:
-            false
+            return false
         }
+    }
+
+    var retryAfterSeconds: Int? {
+        guard case let .invalidResponse(statusCode, body) = self, statusCode == 429 else { return nil }
+        let pattern = #"Please retry in ([0-9.]+)s"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: body, range: NSRange(body.startIndex..., in: body)),
+              let range = Range(match.range(at: 1), in: body),
+              let value = Double(body[range]) else {
+            return 60
+        }
+        return max(1, Int(ceil(value)))
+    }
+
+    var isRateLimited: Bool {
+        if case .rateLimited = self { return true }
+        return retryAfterSeconds != nil
     }
 }

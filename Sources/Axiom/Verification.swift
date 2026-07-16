@@ -12,6 +12,23 @@ enum AxiomVerification {
             failures: &failures
         )
 
+        let equationPage = PageText(pageIndex: 0, text: "The variance is\nVar(X) = E[(X - E[X])²].")
+        let equationCandidates = [
+            MathHighlightCandidate(
+                page_index: 0,
+                exact_text: "Var(X) = E[(X - E[X])²].",
+                kind: "equation",
+                explanation: "Defines variance.",
+                importance: 9,
+                concepts: ["variance"]
+            )
+        ]
+        check(
+            MathAnalysisPrompt.mapHighlights(equationCandidates, onto: equationPage).count == 1,
+            "Equation matching tolerates PDF line breaks",
+            failures: &failures
+        )
+
         do {
             try await verifyStore()
             print("PASS SQLite cache identity and persisted highlights")

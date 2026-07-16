@@ -3,9 +3,10 @@ import Foundation
 enum MathAnalysisPrompt {
     static let instructions = """
     You are Axiom, an AI reading assistant for mathematics textbooks.
-    Identify only text spans that should be visually highlighted on the supplied page.
-    Prefer definitions, theorems, lemmas, corollaries, equations, notation, and central concepts.
-    exact_text must be copied exactly from the page text and should be short enough to highlight directly.
+    Identify the important text spans on the supplied page that should be visually highlighted.
+    Include definitions, theorems, lemmas, corollaries, displayed equations, notation, assumptions, and central concepts. Do not omit a displayed formula merely because it is short.
+    exact_text is used to locate text in the PDF. It MUST be copied character-for-character from PAGE_TEXT, including mathematical symbols, punctuation, and spacing. Never rewrite a formula as LaTeX, prose, or an equivalent expression. For a formula, return the shortest distinctive exact fragment available in PAGE_TEXT; include a nearby label or sentence only when the formula alone is not distinctive.
+    Keep each span focused and non-overlapping. Prefer a complete equation or a complete named statement over a vague surrounding paragraph.
     concepts should contain concise canonical names for concepts discussed by the highlighted span.
     Do not solve exercises. Do not include generic prose.
     """
@@ -43,19 +44,30 @@ enum MathAnalysisPrompt {
         let directRange = nsPageText.range(of: highlightText, options: [.caseInsensitive])
         if directRange.location != NSNotFound { return directRange }
 
-        let words = highlightText
-            .components(separatedBy: .whitespacesAndNewlines)
+        // PDFKit frequently changes a line break into a space (and vice versa), especially
+        // inside displayed equations. Preserve every non-whitespace character and make only
+        // whitespace flexible so equation punctuation and symbols remain precise.
+        let parts = highlightText.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !parts.isEmpty else { return nil }
+        let whitespaceFlexiblePattern = parts
+            .map(NSRegularExpression.escapedPattern(for:))
+            .joined(separator: #"\s+"#)
+        if let regex = try? NSRegularExpression(pattern: whitespaceFlexiblePattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: pageText, range: NSRange(location: 0, length: nsPageText.length)) {
+            return match.range
+        }
+
+        // Last resort for prose: tolerate PDF punctuation/line-break extraction differences,
+        // but require enough words that a short formula cannot match an unrelated passage.
+        let words = parts
             .map { $0.trimmingCharacters(in: .punctuationCharacters) }
-            .filter { !$0.isEmpty }
+            .filter { $0.rangeOfCharacter(from: .letters) != nil }
         guard words.count >= 4 else { return nil }
-        let pattern = Array(words.prefix(14))
+        let prosePattern = Array(words.prefix(14))
             .map(NSRegularExpression.escapedPattern(for:))
             .joined(separator: #"[\s\p{P}]*"#)
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }
-        return regex.firstMatch(
-            in: pageText,
-            range: NSRange(location: 0, length: nsPageText.length)
-        )?.range
+        guard let regex = try? NSRegularExpression(pattern: prosePattern, options: [.caseInsensitive]) else { return nil }
+        return regex.firstMatch(in: pageText, range: NSRange(location: 0, length: nsPageText.length))?.range
     }
 }
 
@@ -97,6 +109,7 @@ final class ConfiguredMathAnalyzer {
     private let openAI: OpenAIMathAnalyzer
     private var requestInFlight = false
     private var requestWaiters: [CheckedContinuation<Void, Never>] = []
+    private var rateLimitUntil: Date?
 
     let providerName: String
     let modelName: String
@@ -134,21 +147,37 @@ final class ConfiguredMathAnalyzer {
         )
     }
 
-    func passages(page: PageText, limit: Int = 16) async throws -> [ImportantPassage] {
+    func passages(page: PageText, limit: Int = 20) async throws -> [ImportantPassage] {
+        if let rateLimitUntil {
+            let remaining = rateLimitUntil.timeIntervalSinceNow
+            guard remaining <= 0 else {
+                throw RemoteAnalyzerError.rateLimited(retryAfterSeconds: max(1, Int(ceil(remaining))))
+            }
+            self.rateLimitUntil = nil
+        }
         await acquireRequestSlot()
         defer { releaseRequestSlot() }
-        var candidates: [MathHighlightCandidate] = []
-        for chunk in PageChunker.chunks(text: page.text) {
-            let response: MathHighlightResponse
-            switch provider {
-            case .gemini:
-                response = try await gemini.analyze(pageIndex: page.pageIndex, text: chunk, limit: limit)
-            case .openai:
-                response = try await openAI.analyze(pageIndex: page.pageIndex, text: chunk, limit: limit)
+        do {
+            var candidates: [MathHighlightCandidate] = []
+            for chunk in PageChunker.chunks(text: page.text) {
+                let response: MathHighlightResponse
+                switch provider {
+                case .gemini:
+                    response = try await gemini.analyze(pageIndex: page.pageIndex, text: chunk, limit: limit)
+                case .openai:
+                    response = try await openAI.analyze(pageIndex: page.pageIndex, text: chunk, limit: limit)
+                }
+                candidates.append(contentsOf: response.highlights)
             }
-            candidates.append(contentsOf: response.highlights)
+            return MathAnalysisPrompt.mapHighlights(candidates, onto: page)
+        } catch let error as RemoteAnalyzerError {
+            if let seconds = error.retryAfterSeconds {
+                // Add a small buffer so a button click at the displayed boundary does not
+                // immediately consume another limited request.
+                rateLimitUntil = Date().addingTimeInterval(TimeInterval(seconds + 2))
+            }
+            throw error
         }
-        return MathAnalysisPrompt.mapHighlights(candidates, onto: page)
     }
 
     private func acquireRequestSlot() async {
@@ -178,7 +207,7 @@ final class GeminiMathAnalyzer {
 
     init(environment: [String: String]) {
         apiKey = environment["GEMINI_API_KEY"]
-        model = environment["GEMINI_MODEL"] ?? "gemini-3.5-flash"
+        model = environment["GEMINI_MODEL"] ?? "gemini-3.1-flash-lite"
     }
 
     func analyze(pageIndex: Int, text: String, limit: Int) async throws -> MathHighlightResponse {
@@ -194,14 +223,17 @@ final class GeminiMathAnalyzer {
 
         \(MathAnalysisPrompt.input(pageIndex: pageIndex, text: text))
         """
+        // Gemini 2.5 Flash-Lite accepts low/high, whereas Gemini 3.1 Flash-Lite
+        // and Gemini 3.5 Flash accept minimal. Keep the setting compatible with either.
+        let thinkingLevel = model.lowercased().contains("2.5") ? "low" : "minimal"
         let body: [String: Any] = [
             "model": model,
             "input": input,
-            "generation_config": ["thinking_level": "minimal"],
+            "generation_config": ["thinking_level": thinkingLevel],
             "response_format": ["type": "text", "mime_type": "application/json", "schema": schema],
             "store": false
         ]
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: url, timeoutInterval: 25)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
         request.addValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
