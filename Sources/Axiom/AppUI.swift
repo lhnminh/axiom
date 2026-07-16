@@ -38,17 +38,20 @@ private enum LibraryPalette {
     static let canvas = NSColor(calibratedRed: 0.095, green: 0.098, blue: 0.106, alpha: 1)
     static let raised = NSColor(calibratedRed: 0.135, green: 0.139, blue: 0.149, alpha: 1)
     static let border = NSColor(calibratedWhite: 1, alpha: 0.12)
+    static let control = NSColor(calibratedWhite: 1, alpha: 0.07)
     static let primaryText = NSColor(calibratedWhite: 0.94, alpha: 1)
     static let secondaryText = NSColor(calibratedWhite: 0.66, alpha: 1)
 }
 
 private enum ReaderPalette {
-    static let toolbar = NSColor(
-        calibratedRed: 0.095,
-        green: 0.105,
-        blue: 0.125,
-        alpha: 1
-    )
+    static let canvas = LibraryPalette.canvas
+    static let raised = LibraryPalette.raised
+    static let toolbar = LibraryPalette.raised
+    static let border = LibraryPalette.border
+    static let control = LibraryPalette.control
+    static let icon = NSColor.white
+    static let primaryText = LibraryPalette.primaryText
+    static let secondaryText = LibraryPalette.secondaryText
 }
 
 @MainActor
@@ -837,31 +840,32 @@ final class ReaderViewController: NSViewController {
     override func loadView() {
         let root = NSView()
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor(
-            calibratedRed: 0.055,
-            green: 0.061,
-            blue: 0.075,
-            alpha: 1
-        ).cgColor
+        root.layer?.backgroundColor = ReaderPalette.canvas.cgColor
+        root.appearance = NSAppearance(named: .darkAqua)
         let toolbar = makeToolbar()
         pdfView.autoScales = true
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
-        pdfView.backgroundColor = NSColor(
-            calibratedRed: 0.055,
-            green: 0.061,
-            blue: 0.075,
-            alpha: 1
-        )
+        pdfView.backgroundColor = ReaderPalette.canvas
         pdfView.translatesAutoresizingMaskIntoConstraints = false
         sidebar.isEditable = false
         sidebar.drawsBackground = true
-        sidebar.backgroundColor = .textBackgroundColor
-        sidebar.textContainerInset = NSSize(width: 14, height: 14)
+        sidebar.backgroundColor = ReaderPalette.raised
+        sidebar.textColor = ReaderPalette.primaryText
+        sidebar.insertionPointColor = ReaderPalette.primaryText
+        sidebar.textContainerInset = NSSize(width: 18, height: 18)
 
         let sidebarScroll = NSScrollView()
         sidebarScroll.documentView = sidebar
         sidebarScroll.hasVerticalScroller = true
+        sidebarScroll.drawsBackground = true
+        sidebarScroll.backgroundColor = ReaderPalette.raised
+        sidebarScroll.borderType = .noBorder
+        sidebarScroll.contentView.drawsBackground = true
+        sidebarScroll.contentView.backgroundColor = ReaderPalette.raised
+        sidebarScroll.wantsLayer = true
+        sidebarScroll.layer?.borderWidth = 1
+        sidebarScroll.layer?.borderColor = ReaderPalette.border.cgColor
         sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(toolbar)
         root.addSubview(pdfView)
@@ -926,23 +930,59 @@ final class ReaderViewController: NSViewController {
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
         toolbar.layer?.backgroundColor = ReaderPalette.toolbar.cgColor
+        toolbar.layer?.borderWidth = 1
+        toolbar.layer?.borderColor = ReaderPalette.border.cgColor
         toolbar.appearance = NSAppearance(named: .darkAqua)
 
-        let appName = NSTextField(labelWithString: "Axiom")
-        appName.font = .systemFont(ofSize: 16, weight: .bold)
-        appName.textColor = NSColor(calibratedWhite: 0.88, alpha: 1)
-        appName.translatesAutoresizingMaskIntoConstraints = false
+        let backSurface = NSView()
+        backSurface.wantsLayer = true
+        backSurface.layer?.backgroundColor = ReaderPalette.control.cgColor
+        backSurface.layer?.borderWidth = 1
+        backSurface.layer?.borderColor = ReaderPalette.border.cgColor
+        backSurface.layer?.cornerRadius = 9
+        backSurface.translatesAutoresizingMaskIntoConstraints = false
 
-        let back = NSButton(title: "Library", target: self, action: #selector(backAction))
-        back.image = NSImage(systemSymbolName: "books.vertical", accessibilityDescription: "Back to library")
-        back.imagePosition = .imageLeading
-        back.bezelStyle = .texturedRounded
-        back.contentTintColor = .white
-        back.translatesAutoresizingMaskIntoConstraints = false
+        let backIcon = NSImageView(
+            image: NSImage(systemSymbolName: "books.vertical", accessibilityDescription: nil) ?? NSImage()
+        )
+        backIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        backIcon.contentTintColor = ReaderPalette.icon
+        backIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        let backLabel = NSTextField(labelWithString: "Library")
+        backLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        backLabel.textColor = ReaderPalette.icon
+        backLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let backContent = NSStackView(views: [backIcon, backLabel])
+        backContent.orientation = .horizontal
+        backContent.alignment = .centerY
+        backContent.spacing = 8
+        backContent.translatesAutoresizingMaskIntoConstraints = false
+
+        let backButton = NSButton(title: "", target: self, action: #selector(backAction))
+        backButton.isBordered = false
+        backButton.isTransparent = true
+        backButton.toolTip = "Back to library"
+        backButton.setAccessibilityLabel("Library")
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+
+        backSurface.addSubview(backContent)
+        backSurface.addSubview(backButton)
+        NSLayoutConstraint.activate([
+            backContent.centerXAnchor.constraint(equalTo: backSurface.centerXAnchor),
+            backContent.centerYAnchor.constraint(equalTo: backSurface.centerYAnchor),
+            backIcon.widthAnchor.constraint(equalToConstant: 16),
+            backIcon.heightAnchor.constraint(equalToConstant: 16),
+            backButton.topAnchor.constraint(equalTo: backSurface.topAnchor),
+            backButton.leadingAnchor.constraint(equalTo: backSurface.leadingAnchor),
+            backButton.trailingAnchor.constraint(equalTo: backSurface.trailingAnchor),
+            backButton.bottomAnchor.constraint(equalTo: backSurface.bottomAnchor)
+        ])
 
         let bookTitle = NSTextField(labelWithString: textbook.displayName)
         bookTitle.font = .systemFont(ofSize: 15, weight: .medium)
-        bookTitle.textColor = NSColor(calibratedWhite: 0.94, alpha: 1)
+        bookTitle.textColor = ReaderPalette.primaryText
         bookTitle.alignment = .center
         bookTitle.lineBreakMode = .byTruncatingMiddle
         bookTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -961,7 +1001,7 @@ final class ReaderViewController: NSViewController {
         )
 
         pageLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        pageLabel.textColor = NSColor(calibratedWhite: 0.90, alpha: 1)
+        pageLabel.textColor = ReaderPalette.primaryText
         pageLabel.alignment = .center
         pageLabel.lineBreakMode = .byTruncatingTail
         pageLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -975,40 +1015,38 @@ final class ReaderViewController: NSViewController {
         )
         retry.toolTip = "Refresh page analysis"
 
-        let leftGroup = NSStackView(views: [appName, back])
-        leftGroup.orientation = .horizontal
-        leftGroup.alignment = .centerY
-        leftGroup.spacing = 18
-        leftGroup.translatesAutoresizingMaskIntoConstraints = false
-
         let pageControls = NSStackView(views: [previousPageButton, pageLabel, nextPageButton, retry])
         pageControls.orientation = .horizontal
         pageControls.alignment = .centerY
         pageControls.spacing = 8
         pageControls.translatesAutoresizingMaskIntoConstraints = false
 
-        toolbar.addSubview(leftGroup)
+        toolbar.addSubview(backSurface)
         toolbar.addSubview(bookTitle)
         toolbar.addSubview(pageControls)
         NSLayoutConstraint.activate([
-            leftGroup.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 20),
-            leftGroup.centerYAnchor.constraint(
+            backSurface.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 20),
+            backSurface.centerYAnchor.constraint(
                 equalTo: toolbar.bottomAnchor,
                 constant: -ToolbarMetrics.controlCenterFromBottom
             ),
-            leftGroup.widthAnchor.constraint(lessThanOrEqualToConstant: 250),
+            backSurface.widthAnchor.constraint(equalToConstant: 116),
+            backSurface.heightAnchor.constraint(equalToConstant: 36),
 
             bookTitle.centerXAnchor.constraint(equalTo: toolbar.centerXAnchor),
-            bookTitle.centerYAnchor.constraint(equalTo: leftGroup.centerYAnchor),
-            bookTitle.leadingAnchor.constraint(greaterThanOrEqualTo: leftGroup.trailingAnchor, constant: 24),
+            bookTitle.centerYAnchor.constraint(equalTo: backSurface.centerYAnchor),
+            bookTitle.leadingAnchor.constraint(greaterThanOrEqualTo: backSurface.trailingAnchor, constant: 24),
             bookTitle.trailingAnchor.constraint(lessThanOrEqualTo: pageControls.leadingAnchor, constant: -24),
 
             pageControls.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -20),
-            pageControls.centerYAnchor.constraint(equalTo: leftGroup.centerYAnchor),
+            pageControls.centerYAnchor.constraint(equalTo: backSurface.centerYAnchor),
             pageLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
             previousPageButton.widthAnchor.constraint(equalToConstant: 34),
+            previousPageButton.heightAnchor.constraint(equalToConstant: 32),
             nextPageButton.widthAnchor.constraint(equalToConstant: 34),
-            retry.widthAnchor.constraint(equalToConstant: 34)
+            nextPageButton.heightAnchor.constraint(equalToConstant: 32),
+            retry.widthAnchor.constraint(equalToConstant: 34),
+            retry.heightAnchor.constraint(equalToConstant: 32)
         ])
         updatePageControls()
         return toolbar
@@ -1024,9 +1062,15 @@ final class ReaderViewController: NSViewController {
             systemSymbolName: symbolName,
             accessibilityDescription: accessibilityDescription
         )
+        button.image?.isTemplate = true
         button.imagePosition = .imageOnly
-        button.bezelStyle = .texturedRounded
-        button.contentTintColor = .white
+        button.isBordered = false
+        button.wantsLayer = true
+        button.layer?.backgroundColor = ReaderPalette.control.cgColor
+        button.layer?.borderWidth = 1
+        button.layer?.borderColor = ReaderPalette.border.cgColor
+        button.layer?.cornerRadius = 7
+        button.contentTintColor = ReaderPalette.icon
         button.target = self
         button.action = action
         button.toolTip = accessibilityDescription
@@ -1375,18 +1419,66 @@ final class ReaderViewController: NSViewController {
 
     private func renderSidebar(status: String, passages: [ImportantPassage], note: String) {
         let content = NSMutableAttributedString()
-        content.append(NSAttributedString(string: "Page \(currentPageIndex + 1)\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
-        content.append(NSAttributedString(string: "\(status)\n\n", attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor]))
-        content.append(NSAttributedString(string: "\(note)\n\n", attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]))
+        content.append(NSAttributedString(
+            string: "Page \(currentPageIndex + 1)\n",
+            attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 18),
+                .foregroundColor: ReaderPalette.primaryText
+            ]
+        ))
+        content.append(NSAttributedString(
+            string: "\(status)\n\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                .foregroundColor: ReaderPalette.secondaryText
+            ]
+        ))
+        content.append(NSAttributedString(
+            string: "\(note)\n\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 12),
+                .foregroundColor: ReaderPalette.secondaryText
+            ]
+        ))
         if passages.isEmpty {
-            content.append(NSAttributedString(string: "No highlight details for this page.", attributes: [.font: NSFont.systemFont(ofSize: 13)]))
+            content.append(NSAttributedString(
+                string: "No highlight details for this page.",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 13),
+                    .foregroundColor: ReaderPalette.primaryText
+                ]
+            ))
         }
         for (index, passage) in passages.enumerated() {
-            content.append(NSAttributedString(string: "\(index + 1). \(passage.kind) - score \(passage.score)\n", attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor]))
-            content.append(NSAttributedString(string: "\(passage.sentence)\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 13)]))
-            content.append(NSAttributedString(string: "\(passage.explanation)\n", attributes: [.font: NSFont.systemFont(ofSize: 12)]))
+            content.append(NSAttributedString(
+                string: "\(index + 1). \(passage.kind) - score \(passage.score)\n",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+                    .foregroundColor: ReaderPalette.secondaryText
+                ]
+            ))
+            content.append(NSAttributedString(
+                string: "\(passage.sentence)\n",
+                attributes: [
+                    .font: NSFont.boldSystemFont(ofSize: 13),
+                    .foregroundColor: ReaderPalette.primaryText
+                ]
+            ))
+            content.append(NSAttributedString(
+                string: "\(passage.explanation)\n",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 12),
+                    .foregroundColor: ReaderPalette.primaryText
+                ]
+            ))
             if !passage.concepts.isEmpty {
-                content.append(NSAttributedString(string: "Concepts: \(passage.concepts.joined(separator: ", "))\n", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]))
+                content.append(NSAttributedString(
+                    string: "Concepts: \(passage.concepts.joined(separator: ", "))\n",
+                    attributes: [
+                        .font: NSFont.systemFont(ofSize: 11),
+                        .foregroundColor: ReaderPalette.secondaryText
+                    ]
+                ))
             }
             content.append(NSAttributedString(string: "\n"))
         }
@@ -1420,9 +1512,78 @@ final class ReaderViewController: NSViewController {
 }
 
 @MainActor
+final class ContentHostViewController: NSViewController {
+    enum Direction {
+        case forward
+        case backward
+    }
+
+    private var currentController: NSViewController?
+    private var isTransitioning = false
+
+    override func loadView() {
+        let root = NSView()
+        root.wantsLayer = true
+        root.layer?.backgroundColor = LibraryPalette.canvas.cgColor
+        root.appearance = NSAppearance(named: .darkAqua)
+        view = root
+    }
+
+    func show(
+        _ nextController: NSViewController,
+        animated: Bool,
+        direction: Direction
+    ) {
+        guard !isTransitioning else { return }
+        nextController.view.frame = view.bounds
+        nextController.view.autoresizingMask = [.width, .height]
+
+        guard let currentController else {
+            addChild(nextController)
+            view.addSubview(nextController.view)
+            self.currentController = nextController
+            return
+        }
+
+        addChild(nextController)
+        guard animated else {
+            currentController.view.removeFromSuperview()
+            currentController.removeFromParent()
+            view.addSubview(nextController.view)
+            self.currentController = nextController
+            return
+        }
+
+        isTransitioning = true
+        let options: NSViewController.TransitionOptions
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            options = .crossfade
+        } else {
+            options = direction == .forward ? .slideLeft : .slideRight
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.32
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            transition(
+                from: currentController,
+                to: nextController,
+                options: options
+            ) { [weak self, weak currentController] in
+                MainActor.assumeIsolated {
+                    currentController?.removeFromParent()
+                    self?.currentController = nextController
+                    self?.isTransitioning = false
+                }
+            }
+        }
+    }
+}
+
+@MainActor
 final class AppCoordinator {
     private let window: NSWindow
-    private let defaultWindowBackgroundColor: NSColor
+    private let contentHost = ContentHostViewController()
     private let store: TextbookStore
     private let extractor = TextbookMetadataExtractor()
     private let analyzer = ConfiguredMathAnalyzer()
@@ -1430,23 +1591,23 @@ final class AppCoordinator {
 
     init(window: NSWindow) throws {
         self.window = window
-        defaultWindowBackgroundColor = window.backgroundColor
         store = try TextbookStore()
+        window.contentViewController = contentHost
         Task { try? await store.resetInterruptedAnalysis() }
     }
 
-    func showLibrary() {
+    func showLibrary(animated: Bool = true) {
         let library = LibraryViewController(store: store, extractor: extractor) { [weak self] textbook in
             self?.showReader(textbook)
         }
         self.library = library
-        window.contentViewController = library
         window.title = ""
         configureWindowForLibrary()
+        contentHost.show(library, animated: animated, direction: .backward)
     }
 
     func importFolder() {
-        showLibrary()
+        showLibrary(animated: false)
         library?.importFolder()
     }
 
@@ -1454,16 +1615,16 @@ final class AppCoordinator {
         let reader = ReaderViewController(textbook: textbook, store: store, analyzer: analyzer) { [weak self] in
             self?.showLibrary()
         }
-        window.contentViewController = reader
         window.title = textbook.displayName
         configureWindowForReader()
+        contentHost.show(reader, animated: true, direction: .forward)
     }
 
     private func configureWindowForLibrary() {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = false
         window.titlebarSeparatorStyle = .automatic
-        window.backgroundColor = defaultWindowBackgroundColor
+        window.backgroundColor = LibraryPalette.canvas
     }
 
     private func configureWindowForReader() {
@@ -1494,6 +1655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.minSize = WindowMetrics.minimumSize
         window.isOpaque = false
         window.backgroundColor = .clear
+        window.appearance = NSAppearance(named: .darkAqua)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
@@ -1507,7 +1669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureMenu()
         do {
             coordinator = try AppCoordinator(window: window)
-            coordinator?.showLibrary()
+            coordinator?.showLibrary(animated: false)
         } catch {
             let alert = NSAlert(error: error)
             alert.runModal()
