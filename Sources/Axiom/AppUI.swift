@@ -25,10 +25,13 @@ enum TextbookURLResolver {
 }
 
 enum AxiomBrand {
-    static let logo: NSImage? = {
-        guard let url = Bundle.module.url(forResource: "Axiom Logo", withExtension: "png") else { return nil }
+    static let logo = image(named: "Axiom_logo_transparent")
+    static let appIcon = image(named: "Axiom_app_icon")
+
+    private static func image(named name: String) -> NSImage? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "png") else { return nil }
         return NSImage(contentsOf: url)
-    }()
+    }
 }
 
 private enum LibraryPalette {
@@ -39,6 +42,23 @@ private enum LibraryPalette {
     static let border = NSColor(calibratedWhite: 1, alpha: 0.12)
     static let primaryText = NSColor(calibratedWhite: 0.94, alpha: 1)
     static let secondaryText = NSColor(calibratedWhite: 0.66, alpha: 1)
+}
+
+private enum ReaderPalette {
+    static let toolbar = NSColor(
+        calibratedRed: 0.095,
+        green: 0.105,
+        blue: 0.125,
+        alpha: 1
+    )
+}
+
+@MainActor
+private func suppressFocusRings(in view: NSView) {
+    view.focusRingType = .none
+    for subview in view.subviews {
+        suppressFocusRings(in: subview)
+    }
 }
 
 @MainActor
@@ -162,6 +182,7 @@ final class TextbookCardItem: NSCollectionViewItem {
             continueButton.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             continueButton.heightAnchor.constraint(equalToConstant: 34)
         ])
+        suppressFocusRings(in: root)
         view = root
     }
 
@@ -233,6 +254,12 @@ final class TextbookCardItem: NSCollectionViewItem {
 
 @MainActor
 final class LibraryViewController: NSViewController, NSCollectionViewDataSource, NSCollectionViewDelegateFlowLayout {
+    private enum SidebarLayout {
+        static let badgeTrailingInset: CGFloat = 12
+        static let badgeWidth: CGFloat = 46
+        static let badgeHeight: CGFloat = 24
+    }
+
     private let store: TextbookStore
     private let extractor: TextbookMetadataExtractor
     private let onOpen: (TextbookSummary) -> Void
@@ -277,7 +304,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         heroLogo.imageScaling = .scaleProportionallyUpOrDown
         heroLogo.translatesAutoresizingMaskIntoConstraints = false
 
-        let heading = NSTextField(labelWithString: "What will you study?")
+        let heading = NSTextField(labelWithString: "What will you learn?")
         heading.font = .systemFont(ofSize: 30, weight: .semibold)
         heading.textColor = LibraryPalette.primaryText
         heading.alignment = .center
@@ -411,6 +438,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             privacyIcon.widthAnchor.constraint(equalToConstant: 13),
             privacyIcon.heightAnchor.constraint(equalToConstant: 13)
         ])
+        suppressFocusRings(in: root)
         view = root
     }
 
@@ -535,21 +563,35 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             button.centerYAnchor.constraint(equalTo: row.centerYAnchor)
         ]
         if let badge {
+            let badgeView = NSView()
+            badgeView.wantsLayer = true
+            badgeView.layer?.backgroundColor = LibraryPalette.raised.cgColor
+            badgeView.layer?.cornerRadius = 7
+            badgeView.translatesAutoresizingMaskIntoConstraints = false
+
             let badgeLabel = NSTextField(labelWithString: badge)
             badgeLabel.font = .systemFont(ofSize: 11, weight: .medium)
             badgeLabel.textColor = LibraryPalette.secondaryText
             badgeLabel.alignment = .center
-            badgeLabel.wantsLayer = true
-            badgeLabel.layer?.backgroundColor = LibraryPalette.raised.cgColor
-            badgeLabel.layer?.cornerRadius = 7
+            badgeLabel.maximumNumberOfLines = 1
+            badgeLabel.lineBreakMode = .byClipping
+            badgeLabel.cell?.usesSingleLineMode = true
             badgeLabel.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(badgeLabel)
+            badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
+            badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+            badgeView.addSubview(badgeLabel)
+            row.addSubview(badgeView)
             constraints.append(contentsOf: [
-                button.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -8),
-                badgeLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
-                badgeLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                badgeLabel.widthAnchor.constraint(equalToConstant: 46),
-                badgeLabel.heightAnchor.constraint(equalToConstant: 24)
+                button.trailingAnchor.constraint(lessThanOrEqualTo: badgeView.leadingAnchor, constant: -8),
+                badgeView.trailingAnchor.constraint(
+                    equalTo: row.trailingAnchor,
+                    constant: -SidebarLayout.badgeTrailingInset
+                ),
+                badgeView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                badgeView.widthAnchor.constraint(equalToConstant: SidebarLayout.badgeWidth),
+                badgeView.heightAnchor.constraint(equalToConstant: SidebarLayout.badgeHeight),
+                badgeLabel.centerXAnchor.constraint(equalTo: badgeView.centerXAnchor),
+                badgeLabel.centerYAnchor.constraint(equalTo: badgeView.centerYAnchor)
             ])
         } else {
             constraints.append(button.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12))
@@ -793,6 +835,7 @@ final class ReaderViewController: NSViewController {
             sidebarScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             sidebarScroll.widthAnchor.constraint(equalToConstant: 360)
         ])
+        suppressFocusRings(in: root)
         view = root
         petOverlay.configureDragging(
             movementBoundsProvider: { [weak self] in self?.petMovementBounds ?? .zero },
@@ -832,12 +875,7 @@ final class ReaderViewController: NSViewController {
         let toolbar = NSView()
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         toolbar.wantsLayer = true
-        toolbar.layer?.backgroundColor = NSColor(
-            calibratedRed: 0.095,
-            green: 0.105,
-            blue: 0.125,
-            alpha: 1
-        ).cgColor
+        toolbar.layer?.backgroundColor = ReaderPalette.toolbar.cgColor
         toolbar.appearance = NSAppearance(named: .darkAqua)
 
         let appName = NSTextField(labelWithString: "Axiom")
@@ -1186,6 +1224,7 @@ final class ReaderViewController: NSViewController {
 @MainActor
 final class AppCoordinator {
     private let window: NSWindow
+    private let defaultWindowBackgroundColor: NSColor
     private let store: TextbookStore
     private let extractor = TextbookMetadataExtractor()
     private let analyzer = ConfiguredMathAnalyzer()
@@ -1193,6 +1232,7 @@ final class AppCoordinator {
 
     init(window: NSWindow) throws {
         self.window = window
+        defaultWindowBackgroundColor = window.backgroundColor
         store = try TextbookStore()
         Task { try? await store.resetInterruptedAnalysis() }
     }
@@ -1204,6 +1244,7 @@ final class AppCoordinator {
         self.library = library
         window.contentViewController = library
         window.title = "Axiom Textbooks"
+        configureWindowForLibrary()
     }
 
     func importFolder() {
@@ -1217,6 +1258,21 @@ final class AppCoordinator {
         }
         window.contentViewController = reader
         window.title = textbook.displayName
+        configureWindowForReader()
+    }
+
+    private func configureWindowForLibrary() {
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
+        window.titlebarSeparatorStyle = .automatic
+        window.backgroundColor = defaultWindowBackgroundColor
+    }
+
+    private func configureWindowForReader() {
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.backgroundColor = ReaderPalette.toolbar
     }
 }
 
@@ -1238,8 +1294,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.minSize = WindowMetrics.minimumSize
-        if let logo = AxiomBrand.logo {
-            NSApplication.shared.applicationIconImage = logo
+        if let appIcon = AxiomBrand.appIcon {
+            NSApplication.shared.applicationIconImage = appIcon
         }
         window.center()
         window.makeKeyAndOrderFront(nil)

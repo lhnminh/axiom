@@ -14,7 +14,8 @@ let package = Package(
         .executableTarget(
             name: "Axiom",
             resources: [
-                .process("Resources/Axiom Logo.png"),
+                .process("Resources/Axiom_logo_transparent.png"),
+                .process("Resources/Axiom_app_icon.png"),
                 .copy("Resources/Pets")
             ],
             linkerSettings: [
