@@ -297,6 +297,7 @@ final class PetOverlayView: NSView {
     private var highlightPassStartFrame: NSRect = .zero
     private var highlightPassEndFrame: NSRect = .zero
     private var highlightTargets: [NSPoint] = []
+    private var highlightContentTargetCount = 0
     private var highlightTargetIndex = 0
     private var highlightArrivalHandler: ((Int) -> Void)?
     private var highlightCompletion: (() -> Void)?
@@ -354,7 +355,10 @@ final class PetOverlayView: NSView {
 
         isPerformingHighlightPass = true
         isHovered = false
-        highlightTargets = targets
+        // Finish by returning to the pet's exact resting position. This final
+        // destination is not a passage and therefore does not create a highlight.
+        highlightContentTargetCount = targets.count
+        highlightTargets = targets + [NSPoint(x: frame.midX, y: frame.midY)]
         highlightTargetIndex = 0
         highlightArrivalHandler = onArrival
         highlightCompletion = completion
@@ -374,6 +378,7 @@ final class PetOverlayView: NSView {
         highlightActionWorkItem = nil
         highlightPassStartedAt = nil
         highlightTargets = []
+        highlightContentTargetCount = 0
         highlightTargetIndex = 0
         highlightArrivalHandler = nil
         highlightCompletion = nil
@@ -618,6 +623,10 @@ final class PetOverlayView: NSView {
         highlightPassTimer?.invalidate()
         highlightPassTimer = nil
         frame = highlightPassEndFrame
+        guard highlightTargetIndex < highlightContentTargetCount else {
+            finishHighlightPass()
+            return
+        }
         highlightArrivalHandler?(highlightTargetIndex)
         activityState = .review
         activeAnimationState = .review
@@ -638,9 +647,10 @@ final class PetOverlayView: NSView {
         highlightActionWorkItem = nil
         highlightPassStartedAt = nil
         highlightTargets = []
+        highlightContentTargetCount = 0
         highlightArrivalHandler = nil
         isPerformingHighlightPass = false
-        activityState = .review
+        activityState = .idle
         transitionToEffectiveState(force: true)
         let completion = highlightCompletion
         highlightCompletion = nil
