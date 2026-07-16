@@ -292,6 +292,10 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         content.layer?.backgroundColor = LibraryPalette.canvas.cgColor
         content.translatesAutoresizingMaskIntoConstraints = false
 
+        let heroLogo = NSImageView(image: AxiomBrand.logo ?? NSImage())
+        heroLogo.imageScaling = .scaleProportionallyUpOrDown
+        heroLogo.translatesAutoresizingMaskIntoConstraints = false
+
         let heading = NSTextField(labelWithString: "What will you learn today?")
         heading.font = .systemFont(ofSize: 30, weight: .semibold)
         heading.textColor = LibraryPalette.primaryText
@@ -384,6 +388,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         privacy.spacing = 8
         privacy.translatesAutoresizingMaskIntoConstraints = false
 
+        content.addSubview(heroLogo)
         content.addSubview(heading)
         content.addSubview(searchSurface)
         content.addSubview(recentLabel)
@@ -407,7 +412,11 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            heading.topAnchor.constraint(equalTo: content.topAnchor, constant: 58),
+            heroLogo.topAnchor.constraint(equalTo: content.topAnchor, constant: 40),
+            heroLogo.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            heroLogo.widthAnchor.constraint(equalToConstant: 92),
+            heroLogo.heightAnchor.constraint(equalToConstant: 92),
+            heading.topAnchor.constraint(equalTo: heroLogo.bottomAnchor, constant: 20),
             heading.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             searchSurface.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 28),
             searchSurface.centerXAnchor.constraint(equalTo: content.centerXAnchor),
@@ -1489,8 +1498,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
-        if let logo = AxiomBrand.logo {
-            NSApplication.shared.applicationIconImage = logo
+        if let appIcon = AxiomBrand.appIcon {
+            NSApplication.shared.applicationIconImage = appIcon
         }
         window.center()
         window.makeKeyAndOrderFront(nil)
