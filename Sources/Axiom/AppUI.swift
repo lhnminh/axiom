@@ -35,10 +35,8 @@ enum AxiomBrand {
 }
 
 private enum LibraryPalette {
-    static let sidebar = NSColor(calibratedRed: 0.075, green: 0.078, blue: 0.086, alpha: 1)
     static let canvas = NSColor(calibratedRed: 0.095, green: 0.098, blue: 0.106, alpha: 1)
     static let raised = NSColor(calibratedRed: 0.135, green: 0.139, blue: 0.149, alpha: 1)
-    static let selected = NSColor(calibratedRed: 0.185, green: 0.19, blue: 0.20, alpha: 1)
     static let border = NSColor(calibratedWhite: 1, alpha: 0.12)
     static let primaryText = NSColor(calibratedWhite: 0.94, alpha: 1)
     static let secondaryText = NSColor(calibratedWhite: 0.66, alpha: 1)
@@ -253,19 +251,13 @@ final class TextbookCardItem: NSCollectionViewItem {
 }
 
 @MainActor
-final class LibraryViewController: NSViewController, NSCollectionViewDataSource, NSCollectionViewDelegateFlowLayout {
-    private enum SidebarLayout {
-        static let badgeTrailingInset: CGFloat = 12
-        static let badgeWidth: CGFloat = 46
-        static let badgeHeight: CGFloat = 24
-    }
-
+final class LibraryViewController: NSViewController, NSCollectionViewDataSource, NSCollectionViewDelegateFlowLayout, NSTextFieldDelegate {
     private let store: TextbookStore
     private let extractor: TextbookMetadataExtractor
     private let onOpen: (TextbookSummary) -> Void
     private let collectionView = NSCollectionView()
     private let collectionLayout = NSCollectionViewFlowLayout()
-    private let searchField = NSSearchField()
+    private let searchField = NSTextField()
     private let recentLabel = NSTextField(labelWithString: "Recent")
     private let emptyLabel = NSTextField(labelWithString: "")
     private var textbooks: [TextbookSummary] = []
@@ -300,11 +292,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         content.layer?.backgroundColor = LibraryPalette.canvas.cgColor
         content.translatesAutoresizingMaskIntoConstraints = false
 
-        let heroLogo = NSImageView(image: AxiomBrand.logo ?? NSImage())
-        heroLogo.imageScaling = .scaleProportionallyUpOrDown
-        heroLogo.translatesAutoresizingMaskIntoConstraints = false
-
-        let heading = NSTextField(labelWithString: "What will you learn?")
+        let heading = NSTextField(labelWithString: "What will you learn today?")
         heading.font = .systemFont(ofSize: 30, weight: .semibold)
         heading.textColor = LibraryPalette.primaryText
         heading.alignment = .center
@@ -319,25 +307,38 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         searchSurface.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.placeholderString = "Search your library"
-        searchField.font = .systemFont(ofSize: 16)
+        searchField.font = .systemFont(ofSize: 15, weight: .regular)
         searchField.textColor = LibraryPalette.primaryText
         searchField.isBezeled = false
         searchField.drawsBackground = false
         searchField.focusRingType = .none
-        searchField.target = self
-        searchField.action = #selector(searchChanged)
-        searchField.sendsSearchStringImmediately = true
+        searchField.usesSingleLineMode = true
+        searchField.delegate = self
         searchField.translatesAutoresizingMaskIntoConstraints = false
+
+        let searchIcon = NSImageView(
+            image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil) ?? NSImage()
+        )
+        searchIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        searchIcon.contentTintColor = LibraryPalette.secondaryText
+        searchIcon.translatesAutoresizingMaskIntoConstraints = false
 
         let addButton = NSButton()
         addButton.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: "Add textbook folder")
         addButton.imagePosition = .imageOnly
-        addButton.bezelStyle = .texturedRounded
+        addButton.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        addButton.isBordered = false
+        addButton.wantsLayer = true
+        addButton.layer?.backgroundColor = NSColor(calibratedWhite: 1, alpha: 0.06).cgColor
+        addButton.layer?.borderWidth = 1
+        addButton.layer?.borderColor = LibraryPalette.border.cgColor
+        addButton.layer?.cornerRadius = 8
         addButton.contentTintColor = LibraryPalette.primaryText
         addButton.target = self
         addButton.action = #selector(addFolder)
         addButton.toolTip = "Add a folder of textbook PDFs"
         addButton.translatesAutoresizingMaskIntoConstraints = false
+        searchSurface.addSubview(searchIcon)
         searchSurface.addSubview(searchField)
         searchSurface.addSubview(addButton)
 
@@ -383,7 +384,6 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         privacy.spacing = 8
         privacy.translatesAutoresizingMaskIntoConstraints = false
 
-        content.addSubview(heroLogo)
         content.addSubview(heading)
         content.addSubview(searchSurface)
         content.addSubview(recentLabel)
@@ -397,7 +397,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             sidebar.topAnchor.constraint(equalTo: root.topAnchor),
             sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebar.widthAnchor.constraint(equalToConstant: 286),
+            sidebar.widthAnchor.constraint(equalToConstant: 268),
             divider.topAnchor.constraint(equalTo: root.topAnchor),
             divider.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             divider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -407,24 +407,25 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            heroLogo.topAnchor.constraint(equalTo: content.topAnchor, constant: 40),
-            heroLogo.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            heroLogo.widthAnchor.constraint(equalToConstant: 92),
-            heroLogo.heightAnchor.constraint(equalToConstant: 92),
-            heading.topAnchor.constraint(equalTo: heroLogo.bottomAnchor, constant: 20),
+            heading.topAnchor.constraint(equalTo: content.topAnchor, constant: 58),
             heading.centerXAnchor.constraint(equalTo: content.centerXAnchor),
-            searchSurface.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 34),
+            searchSurface.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 28),
             searchSurface.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             searchSurface.widthAnchor.constraint(equalTo: content.widthAnchor, multiplier: 0.66),
             searchSurface.widthAnchor.constraint(lessThanOrEqualToConstant: 720),
             searchSurface.heightAnchor.constraint(equalToConstant: 58),
-            searchField.leadingAnchor.constraint(equalTo: searchSurface.leadingAnchor, constant: 18),
-            searchField.centerYAnchor.constraint(equalTo: searchSurface.centerYAnchor),
+            searchIcon.leadingAnchor.constraint(equalTo: searchSurface.leadingAnchor, constant: 18),
+            searchIcon.centerYAnchor.constraint(equalTo: searchSurface.centerYAnchor),
+            searchIcon.widthAnchor.constraint(equalToConstant: 15),
+            searchIcon.heightAnchor.constraint(equalToConstant: 15),
+            searchField.leadingAnchor.constraint(equalTo: searchIcon.trailingAnchor, constant: 9),
+            searchField.centerYAnchor.constraint(equalTo: searchSurface.centerYAnchor, constant: 1),
             searchField.trailingAnchor.constraint(equalTo: addButton.leadingAnchor, constant: -12),
+            searchField.heightAnchor.constraint(equalToConstant: 22),
             addButton.trailingAnchor.constraint(equalTo: searchSurface.trailingAnchor, constant: -12),
             addButton.centerYAnchor.constraint(equalTo: searchSurface.centerYAnchor),
-            addButton.widthAnchor.constraint(equalToConstant: 38),
-            addButton.heightAnchor.constraint(equalToConstant: 34),
+            addButton.widthAnchor.constraint(equalToConstant: 32),
+            addButton.heightAnchor.constraint(equalToConstant: 32),
             recentLabel.topAnchor.constraint(equalTo: searchSurface.bottomAnchor, constant: 38),
             recentLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 64),
             scroll.topAnchor.constraint(equalTo: recentLabel.bottomAnchor, constant: 16),
@@ -444,7 +445,12 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
 
     override func viewDidAppear() {
         super.viewDidAppear()
+        view.window?.makeFirstResponder(nil)
         refresh()
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        applyFilter()
     }
 
     func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
@@ -486,49 +492,59 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
     func importFolder() { addFolder() }
 
     private func makeSidebar() -> NSView {
-        let sidebar = NSView()
+        let sidebar = NSVisualEffectView()
+        sidebar.material = .sidebar
+        sidebar.blendingMode = .behindWindow
+        sidebar.state = .active
         sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = LibraryPalette.sidebar.cgColor
         sidebar.translatesAutoresizingMaskIntoConstraints = false
 
-        let logo = NSImageView(image: AxiomBrand.logo ?? NSImage())
-        logo.imageScaling = .scaleProportionallyUpOrDown
-        logo.translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: "Axiom")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
+        title.font = .systemFont(ofSize: 24, weight: .semibold)
         title.textColor = LibraryPalette.primaryText
         title.translatesAutoresizingMaskIntoConstraints = false
+
+        let sidebarSearch = NSButton()
+        sidebarSearch.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Search library")
+        sidebarSearch.imagePosition = .imageOnly
+        sidebarSearch.isBordered = false
+        sidebarSearch.contentTintColor = LibraryPalette.primaryText
+        sidebarSearch.target = self
+        sidebarSearch.action = #selector(focusLibrarySearch)
+        sidebarSearch.toolTip = "Search library"
+        sidebarSearch.translatesAutoresizingMaskIntoConstraints = false
 
         let library = makeNavigationRow(title: "Library", symbol: "books.vertical", selected: true)
         let classes = makeNavigationRow(title: "Classes", symbol: "person.3", badge: "Soon", action: #selector(showClassesSoon))
         let studyPlan = makeNavigationRow(title: "Study Plan", symbol: "calendar", badge: "Soon", action: #selector(showStudyPlanSoon))
         let settings = makeNavigationRow(title: "Settings", symbol: "gearshape", action: #selector(showSettingsSoon))
 
-        sidebar.addSubview(logo)
         sidebar.addSubview(title)
+        sidebar.addSubview(sidebarSearch)
         sidebar.addSubview(library)
         sidebar.addSubview(classes)
         sidebar.addSubview(studyPlan)
         sidebar.addSubview(settings)
         NSLayoutConstraint.activate([
-            logo.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 56),
-            logo.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 28),
-            logo.widthAnchor.constraint(equalToConstant: 50),
-            logo.heightAnchor.constraint(equalToConstant: 50),
-            title.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 14),
-            title.centerYAnchor.constraint(equalTo: logo.centerYAnchor),
-            library.topAnchor.constraint(equalTo: logo.bottomAnchor, constant: 42),
-            library.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 16),
-            library.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -16),
-            classes.topAnchor.constraint(equalTo: library.bottomAnchor, constant: 10),
+            title.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 54),
+            title.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 24),
+            sidebarSearch.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            sidebarSearch.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -20),
+            sidebarSearch.widthAnchor.constraint(equalToConstant: 32),
+            sidebarSearch.heightAnchor.constraint(equalToConstant: 32),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: sidebarSearch.leadingAnchor, constant: -12),
+            library.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 30),
+            library.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+            library.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -14),
+            classes.topAnchor.constraint(equalTo: library.bottomAnchor, constant: 8),
             classes.leadingAnchor.constraint(equalTo: library.leadingAnchor),
             classes.trailingAnchor.constraint(equalTo: library.trailingAnchor),
-            studyPlan.topAnchor.constraint(equalTo: classes.bottomAnchor, constant: 10),
+            studyPlan.topAnchor.constraint(equalTo: classes.bottomAnchor, constant: 8),
             studyPlan.leadingAnchor.constraint(equalTo: library.leadingAnchor),
             studyPlan.trailingAnchor.constraint(equalTo: library.trailingAnchor),
             settings.leadingAnchor.constraint(equalTo: library.leadingAnchor),
             settings.trailingAnchor.constraint(equalTo: library.trailingAnchor),
-            settings.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -26)
+            settings.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -22)
         ])
         return sidebar
     }
@@ -542,62 +558,78 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
     ) -> NSView {
         let row = NSView()
         row.wantsLayer = true
-        row.layer?.cornerRadius = 8
-        row.layer?.backgroundColor = selected ? LibraryPalette.selected.cgColor : NSColor.clear.cgColor
+        row.layer?.cornerRadius = 11
+        row.layer?.backgroundColor = selected
+            ? NSColor(calibratedWhite: 1, alpha: 0.11).cgColor
+            : NSColor.clear.cgColor
         row.translatesAutoresizingMaskIntoConstraints = false
 
+        let icon = NSImageView(
+            image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage()
+        )
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
+        icon.contentTintColor = LibraryPalette.primaryText
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 16, weight: .regular)
+        titleLabel.textColor = LibraryPalette.primaryText
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
         let button = NSButton(title: title, target: self, action: action)
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
-        button.imagePosition = .imageLeading
-        button.alignment = .left
-        button.font = .systemFont(ofSize: 15, weight: selected ? .medium : .regular)
-        button.contentTintColor = LibraryPalette.primaryText
         button.isBordered = false
+        button.isTransparent = true
         button.isEnabled = true
         button.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(button)
+        row.addSubview(icon)
+        row.addSubview(titleLabel)
 
         var constraints = [
-            row.heightAnchor.constraint(equalToConstant: 48),
-            button.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 14),
-            button.centerYAnchor.constraint(equalTo: row.centerYAnchor)
+            row.heightAnchor.constraint(equalToConstant: 44),
+            icon.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            icon.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            titleLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor)
         ]
         if let badge {
-            let badgeView = NSView()
-            badgeView.wantsLayer = true
-            badgeView.layer?.backgroundColor = LibraryPalette.raised.cgColor
-            badgeView.layer?.cornerRadius = 7
-            badgeView.translatesAutoresizingMaskIntoConstraints = false
-
-            let badgeLabel = NSTextField(labelWithString: badge)
+            let badgeLabel = NSButton(title: badge, target: nil, action: nil)
             badgeLabel.font = .systemFont(ofSize: 11, weight: .medium)
-            badgeLabel.textColor = LibraryPalette.secondaryText
+            badgeLabel.contentTintColor = LibraryPalette.secondaryText
             badgeLabel.alignment = .center
-            badgeLabel.maximumNumberOfLines = 1
-            badgeLabel.lineBreakMode = .byClipping
-            badgeLabel.cell?.usesSingleLineMode = true
+            badgeLabel.isBordered = false
+            badgeLabel.wantsLayer = true
+            badgeLabel.layer?.backgroundColor = LibraryPalette.raised.cgColor
+            badgeLabel.layer?.cornerRadius = 7
             badgeLabel.translatesAutoresizingMaskIntoConstraints = false
             badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
             badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             badgeView.addSubview(badgeLabel)
             row.addSubview(badgeView)
             constraints.append(contentsOf: [
-                button.trailingAnchor.constraint(lessThanOrEqualTo: badgeView.leadingAnchor, constant: -8),
-                badgeView.trailingAnchor.constraint(
-                    equalTo: row.trailingAnchor,
-                    constant: -SidebarLayout.badgeTrailingInset
-                ),
-                badgeView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                badgeView.widthAnchor.constraint(equalToConstant: SidebarLayout.badgeWidth),
-                badgeView.heightAnchor.constraint(equalToConstant: SidebarLayout.badgeHeight),
-                badgeLabel.centerXAnchor.constraint(equalTo: badgeView.centerXAnchor),
-                badgeLabel.centerYAnchor.constraint(equalTo: badgeView.centerYAnchor)
+                titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -8),
+                badgeLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
+                badgeLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                badgeLabel.widthAnchor.constraint(equalToConstant: 44),
+                badgeLabel.heightAnchor.constraint(equalToConstant: 22)
             ])
         } else {
-            constraints.append(button.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12))
+            constraints.append(titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -12))
         }
+        row.addSubview(button)
+        constraints.append(contentsOf: [
+            button.topAnchor.constraint(equalTo: row.topAnchor),
+            button.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            button.bottomAnchor.constraint(equalTo: row.bottomAnchor)
+        ])
         NSLayoutConstraint.activate(constraints)
         return row
+    }
+
+    @objc private func focusLibrarySearch() {
+        view.window?.makeFirstResponder(searchField)
     }
 
     @objc private func addFolder() {
@@ -715,8 +747,6 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         }
     }
 
-    @objc private func searchChanged() { applyFilter() }
-
     private func applyFilter() {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         filteredTextbooks = query.isEmpty
@@ -753,6 +783,13 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
 
 @MainActor
 final class ReaderViewController: NSViewController {
+    private enum ToolbarMetrics {
+        static let titlebarSafetyHeight: CGFloat = 28
+        static let controlRowHeight: CGFloat = 52
+        static let totalHeight = titlebarSafetyHeight + controlRowHeight
+        static let controlCenterFromBottom = controlRowHeight / 2
+    }
+
     private let textbook: TextbookSummary
     private let store: TextbookStore
     private let analyzer: ConfiguredMathAnalyzer
@@ -824,7 +861,7 @@ final class ReaderViewController: NSViewController {
             toolbar.topAnchor.constraint(equalTo: root.topAnchor),
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            toolbar.heightAnchor.constraint(equalToConstant: 52),
+            toolbar.heightAnchor.constraint(equalToConstant: ToolbarMetrics.totalHeight),
             pdfView.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
             pdfView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             pdfView.trailingAnchor.constraint(equalTo: sidebarScroll.leadingAnchor, constant: -10),
@@ -942,16 +979,19 @@ final class ReaderViewController: NSViewController {
         toolbar.addSubview(pageControls)
         NSLayoutConstraint.activate([
             leftGroup.leadingAnchor.constraint(equalTo: toolbar.leadingAnchor, constant: 20),
-            leftGroup.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            leftGroup.centerYAnchor.constraint(
+                equalTo: toolbar.bottomAnchor,
+                constant: -ToolbarMetrics.controlCenterFromBottom
+            ),
             leftGroup.widthAnchor.constraint(lessThanOrEqualToConstant: 250),
 
             bookTitle.centerXAnchor.constraint(equalTo: toolbar.centerXAnchor),
-            bookTitle.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            bookTitle.centerYAnchor.constraint(equalTo: leftGroup.centerYAnchor),
             bookTitle.leadingAnchor.constraint(greaterThanOrEqualTo: leftGroup.trailingAnchor, constant: 24),
             bookTitle.trailingAnchor.constraint(lessThanOrEqualTo: pageControls.leadingAnchor, constant: -24),
 
             pageControls.trailingAnchor.constraint(equalTo: toolbar.trailingAnchor, constant: -20),
-            pageControls.centerYAnchor.constraint(equalTo: toolbar.centerYAnchor),
+            pageControls.centerYAnchor.constraint(equalTo: leftGroup.centerYAnchor),
             pageLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 112),
             previousPageButton.widthAnchor.constraint(equalToConstant: 34),
             nextPageButton.widthAnchor.constraint(equalToConstant: 34),
@@ -1289,13 +1329,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: WindowMetrics.initialSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.minSize = WindowMetrics.minimumSize
-        if let appIcon = AxiomBrand.appIcon {
-            NSApplication.shared.applicationIconImage = appIcon
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.isMovableByWindowBackground = true
+        if let logo = AxiomBrand.logo {
+            NSApplication.shared.applicationIconImage = logo
         }
         window.center()
         window.makeKeyAndOrderFront(nil)
