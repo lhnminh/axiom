@@ -1441,7 +1441,7 @@ final class AppCoordinator {
         }
         self.library = library
         window.contentViewController = library
-        window.title = "Axiom Textbooks"
+        window.title = ""
         configureWindowForLibrary()
     }
 
@@ -1460,7 +1460,7 @@ final class AppCoordinator {
     }
 
     private func configureWindowForLibrary() {
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = false
         window.titlebarSeparatorStyle = .automatic
         window.backgroundColor = defaultWindowBackgroundColor
