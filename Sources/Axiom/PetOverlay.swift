@@ -299,6 +299,7 @@ final class PetOverlayView: NSView {
     private var highlightTargets: [NSPoint] = []
     private var highlightContentTargetCount = 0
     private var highlightTargetIndex = 0
+    private var highlightTargetProvider: ((Int) -> NSPoint?)?
     private var highlightArrivalHandler: ((Int) -> Void)?
     private var highlightCompletion: (() -> Void)?
     private var highlightActionWorkItem: DispatchWorkItem?
@@ -344,6 +345,7 @@ final class PetOverlayView: NSView {
     func performHighlightPass(
         to targets: [NSPoint],
         in movementBounds: NSRect,
+        targetProvider: @escaping (Int) -> NSPoint?,
         onArrival: @escaping (Int) -> Void,
         completion: @escaping () -> Void
     ) {
@@ -360,6 +362,7 @@ final class PetOverlayView: NSView {
         highlightContentTargetCount = targets.count
         highlightTargets = targets + [NSPoint(x: frame.midX, y: frame.midY)]
         highlightTargetIndex = 0
+        highlightTargetProvider = targetProvider
         highlightArrivalHandler = onArrival
         highlightCompletion = completion
 
@@ -380,6 +383,7 @@ final class PetOverlayView: NSView {
         highlightTargets = []
         highlightContentTargetCount = 0
         highlightTargetIndex = 0
+        highlightTargetProvider = nil
         highlightArrivalHandler = nil
         highlightCompletion = nil
         guard isPerformingHighlightPass else { return }
@@ -584,6 +588,7 @@ final class PetOverlayView: NSView {
             cancelHighlightPass()
             return
         }
+        refreshHighlightDestination()
         let progress = min(1, max(0, Date().timeIntervalSince(startedAt) / highlightPassDuration))
         frame.origin.x = highlightPassStartFrame.minX + (highlightPassEndFrame.minX - highlightPassStartFrame.minX) * progress
         frame.origin.y = highlightPassStartFrame.minY + (highlightPassEndFrame.minY - highlightPassStartFrame.minY) * progress
@@ -596,17 +601,7 @@ final class PetOverlayView: NSView {
             return
         }
         highlightPassStartFrame = frame
-        let target = highlightTargets[highlightTargetIndex]
-        let desiredFrame = NSRect(
-            x: target.x - frame.width / 2,
-            y: target.y - frame.height / 2,
-            width: frame.width,
-            height: frame.height
-        )
-        highlightPassEndFrame = NSRect(
-            origin: CodexPetPositioning.clampedOrigin(for: desiredFrame, in: movementBounds),
-            size: frame.size
-        )
+        updateHighlightDestination(in: movementBounds)
         let deltaX = highlightPassEndFrame.midX - highlightPassStartFrame.midX
         activityState = deltaX < 0 ? .runningLeft : .runningRight
         activeAnimationState = activityState
@@ -625,6 +620,12 @@ final class PetOverlayView: NSView {
         frame = highlightPassEndFrame
         guard highlightTargetIndex < highlightContentTargetCount else {
             finishHighlightPass()
+            return
+        }
+        // The reader may have scrolled this passage out of view during the flight.
+        // Leave it unmarked so the viewport-aware scheduler can visit it later.
+        guard highlightTargetProvider?(highlightTargetIndex) != nil else {
+            cancelHighlightPass()
             return
         }
         highlightArrivalHandler?(highlightTargetIndex)
@@ -648,6 +649,7 @@ final class PetOverlayView: NSView {
         highlightPassStartedAt = nil
         highlightTargets = []
         highlightContentTargetCount = 0
+        highlightTargetProvider = nil
         highlightArrivalHandler = nil
         isPerformingHighlightPass = false
         activityState = .idle
@@ -655,6 +657,37 @@ final class PetOverlayView: NSView {
         let completion = highlightCompletion
         highlightCompletion = nil
         completion?()
+    }
+
+    private func refreshHighlightDestination() {
+        guard isPerformingHighlightPass else { return }
+        if highlightTargetIndex < highlightContentTargetCount,
+           highlightTargetProvider?(highlightTargetIndex) == nil {
+            cancelHighlightPass()
+            return
+        }
+        updateHighlightDestination(in: movementBoundsProvider?() ?? .zero)
+    }
+
+    private func updateHighlightDestination(in movementBounds: NSRect) {
+        guard highlightTargets.indices.contains(highlightTargetIndex) else { return }
+        let target: NSPoint
+        if highlightTargetIndex < highlightContentTargetCount,
+           let liveTarget = highlightTargetProvider?(highlightTargetIndex) {
+            target = liveTarget
+        } else {
+            target = highlightTargets[highlightTargetIndex]
+        }
+        let desiredFrame = NSRect(
+            x: target.x - frame.width / 2,
+            y: target.y - frame.height / 2,
+            width: frame.width,
+            height: frame.height
+        )
+        highlightPassEndFrame = NSRect(
+            origin: CodexPetPositioning.clampedOrigin(for: desiredFrame, in: movementBounds),
+            size: frame.size
+        )
     }
 
     private func animateDraggingAppearance() {
