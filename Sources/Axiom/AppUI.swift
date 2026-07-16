@@ -605,8 +605,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             badgeLabel.translatesAutoresizingMaskIntoConstraints = false
             badgeLabel.setContentHuggingPriority(.required, for: .horizontal)
             badgeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-            badgeView.addSubview(badgeLabel)
-            row.addSubview(badgeView)
+            row.addSubview(badgeLabel)
             constraints.append(contentsOf: [
                 titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badgeLabel.leadingAnchor, constant: -8),
                 badgeLabel.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
@@ -1057,7 +1056,6 @@ final class ReaderViewController: NSViewController {
         pdfView.document = document
         pdfView.autoScales = true
         beginObservingViewport()
-        statusLabel.stringValue = "\(textbook.displayName) - page 1 of \(document.pageCount)"
         updatePageControls()
         petOverlay.setActivityState(.idle)
         renderSidebar(status: "Not analyzed", passages: [], note: "AI runs only when this page is visible.")
@@ -1067,12 +1065,10 @@ final class ReaderViewController: NSViewController {
     @objc private func pageChanged() {
         guard let document, let currentPage = pdfView.currentPage else { return }
         currentPageIndex = document.index(for: currentPage)
-        statusLabel.stringValue = "\(textbook.displayName) - page \(currentPageIndex + 1) of \(document.pageCount)"
         // Page changes often fire repeatedly during a fast continuous scroll. Let the
         // viewport settle before retargeting the pet rather than restarting its walk.
         scheduleCurrentPage(after: 500)
         updatePageControls()
-        scheduleCurrentPage()
     }
 
     private func scheduleCurrentPage(after milliseconds: Int = 250) {
