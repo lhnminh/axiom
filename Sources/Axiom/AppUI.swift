@@ -1741,7 +1741,13 @@ final class ReaderViewController: NSViewController {
             return
         }
         let content = NSMutableAttributedString()
-        content.append(NSAttributedString(string: "Highlight details\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
+        content.append(NSAttributedString(
+            string: "Highlight details\n",
+            attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 18),
+                .foregroundColor: NSColor.white
+            ]
+        ))
         content.append(NSAttributedString(string: "\nHover over a highlight to see why it matters.\n", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]))
         sidebar.textStorage?.setAttributedString(content)
     }
@@ -1754,7 +1760,13 @@ final class ReaderViewController: NSViewController {
                 aiDisplay: formula,
                 source: passage.sentence
             )
-            content.append(NSAttributedString(string: "Formula\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
+            content.append(NSAttributedString(
+                string: "Formula\n\n",
+                attributes: [
+                    .font: NSFont.boldSystemFont(ofSize: 18),
+                    .foregroundColor: NSColor.white
+                ]
+            ))
             content.append(NSAttributedString(string: displayedFormula + "\n\n", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 15, weight: .medium), .foregroundColor: NSColor.labelColor]))
             appendInspectorSection("What it means", FormulaLearningSupport.explanation(aiExplanation: passage.explanation, formula: displayedFormula), to: content)
             let symbols = FormulaDisplayFormatter.symbolNotes(for: displayedFormula)
