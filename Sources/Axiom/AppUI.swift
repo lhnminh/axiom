@@ -2,6 +2,219 @@ import AppKit
 import PDFKit
 import UniformTypeIdentifiers
 
+@MainActor
+final class HighlightAwarePDFView: PDFView {
+    var onPointerMoved: ((NSPoint?) -> Void)?
+    private var trackingAreaReference: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaReference = area
+        super.updateTrackingAreas()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        onPointerMoved?(convert(event.locationInWindow, from: nil))
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onPointerMoved?(nil)
+        super.mouseExited(with: event)
+    }
+}
+
+enum FormulaDisplayFormatter {
+    static func display(_ formula: String) -> String {
+        var result = formula
+            .replacingOccurrences(of: #"ˆ\s*([A-Za-z])"#, with: "$1̂", options: .regularExpression)
+            .replacingOccurrences(of: #"\r\n?"#, with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*([\]\),])"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"([\[(])\s+"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"([A-Za-z])\s+\("#, with: "$1(", options: .regularExpression)
+            .replacingOccurrences(of: #"̂\s+\("#, with: "̂(", options: .regularExpression)
+            .replacingOccurrences(of: #"\)2\b"#, with: ")²", options: .regularExpression)
+            .replacingOccurrences(of: #"\]2\b"#, with: "]²", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        result = result
+            .replacingOccurrences(of: "Reducible", with: "")
+            .replacingOccurrences(of: "Irreducible", with: "")
+            .replacingOccurrences(of: #"\s+([,\]\)])"#, with: "$1", options: .regularExpression)
+        result = repairInterleavedLines(in: result)
+        return withoutReferenceNumber(alignedLines(in: result))
+    }
+
+    static func withoutReferenceNumber(_ formula: String) -> String {
+        formula
+            .replacingOccurrences(
+                of: #"\s*,?\s*\(\d+(?:\.\d+)+\)\s*$"#,
+                with: "",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The raw PDF span is still the authority for notation. An AI display can improve
+    /// layout, but it must not silently lose a hat, bar, or other modifying mark.
+    static func preferredDisplay(aiDisplay: String?, source: String) -> String {
+        let sourceDisplay = display(source)
+        guard let aiDisplay = aiDisplay?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !aiDisplay.isEmpty else { return sourceDisplay }
+        let cleanedAI = withoutReferenceNumber(aiDisplay)
+        return notationMarkCount(in: cleanedAI) < notationMarkCount(in: sourceDisplay)
+            ? sourceDisplay
+            : cleanedAI
+    }
+
+    private static func notationMarkCount(in formula: String) -> Int {
+        formula.unicodeScalars.reduce(into: 0) { count, scalar in
+            if scalar.value == 0x0302 || scalar.value == 0x0304 || scalar.value == 0x005E { count += 1 }
+        }
+    }
+
+    /// PDF text extraction occasionally interleaves the end of the first visual row with
+    /// the start of the next one. This repairs the common two-row layout without changing
+    /// the meaning of ordinary one-line equations.
+    private static func repairInterleavedLines(in formula: String) -> String {
+        let compact = formula.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let pattern = #"^(.*?[+−\-]\s*)ˆ\s*=\s*(\[[^\]]+\]\s*²?)\s+([A-Za-z]̂?\([^\)]*\)\]\s*²?)\s*\+\s*(Var\([^\)]*\).*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: compact, range: NSRange(compact.startIndex..., in: compact)),
+              match.numberOfRanges == 5,
+              let head = substring(compact, match.range(at: 1)),
+              let bracket = substring(compact, match.range(at: 2)),
+              let carriedTerm = substring(compact, match.range(at: 3)),
+              let tail = substring(compact, match.range(at: 4)) else {
+            return compact
+        }
+
+        // The carried term is the hatted function which PDFKit placed after the
+        // second row. Put it back at the end of row one and inside row two.
+        let function = carriedTerm.replacingOccurrences(of: #"\]\s*²?$"#, with: "", options: .regularExpression)
+        let restoredBracket = bracket.replacingOccurrences(
+            of: #"[A-Za-z]\([^\)]*\)(\]\s*²?)$"#,
+            with: function + "$1",
+            options: .regularExpression
+        )
+        return "\(head)\(function)]²\n= \(restoredBracket) + \(tail)"
+    }
+
+    private static func alignedLines(in formula: String) -> String {
+        let normalizedLines = formula
+            .components(separatedBy: .newlines)
+            .map { $0.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        // Keep the visual structure of multi-line display equations. If extraction gave
+        // us a single line containing several aligned equalities, put continuations on
+        // their own row so the formula reads in the same direction as the PDF.
+        return normalizedLines.flatMap { line -> [String] in
+            let pieces = line.components(separatedBy: " = ")
+            guard pieces.count > 2 else { return [line] }
+            return [pieces[0] + " = " + pieces[1]] + pieces.dropFirst(2).map { "= " + $0 }
+        }.joined(separator: "\n")
+    }
+
+    private static func substring(_ string: String, _ range: NSRange) -> String? {
+        guard let swiftRange = Range(range, in: string) else { return nil }
+        return String(string[swiftRange])
+    }
+
+    static func symbolNotes(for formula: String) -> [String] {
+        var notes: [String] = []
+        if formula.contains("Y") { notes.append("Y — observed outcome") }
+        if formula.contains("f̂") { notes.append("f̂(X) — estimated prediction from inputs X") }
+        if formula.contains("ϵ") || formula.contains("ε") { notes.append("ε — irreducible error") }
+        if formula.contains("Var") { notes.append("Var(ε) — variance of the irreducible error") }
+        if formula.contains("E(") { notes.append("E(·) — the average value") }
+        return notes + FormulaNotation.notes(in: formula, excluding: notes)
+    }
+
+    static func pseudocode(for formula: String) -> String? {
+        guard formula.contains("Var"), formula.contains("=") else { return nil }
+        return "prediction = f̂(X)\nerror = Y − prediction\nexpected_error = reducible_error + Var(error)"
+    }
+}
+
+enum FormulaNotation {
+    private static let entries: [(symbols: [String], meaning: String)] = [
+        (["Σ", "∑"], "Σ / ∑ — sum: add all indicated values together"),
+        (["Π", "∏"], "Π / ∏ — product: multiply all indicated values together"),
+        (["∫"], "∫ — integral: add infinitely many tiny pieces across a range"),
+        (["∂"], "∂ — partial derivative: how a result changes when one input changes"),
+        (["∇"], "∇ — gradient: the direction of fastest increase"),
+        (["∞"], "∞ — infinity: continues without end"),
+        (["√"], "√ — square root: the number that multiplies by itself to give the value"),
+        (["±"], "± — plus or minus: use either the positive or negative version"),
+        (["≈"], "≈ — approximately equal to"),
+        (["≠"], "≠ — not equal to"),
+        (["≤"], "≤ — less than or equal to"),
+        (["≥"], "≥ — greater than or equal to"),
+        (["∈"], "∈ — belongs to / is an element of a set"),
+        (["∉"], "∉ — does not belong to a set"),
+        (["⊂", "⊆"], "⊂ / ⊆ — subset: one set is contained in another"),
+        (["∪"], "∪ — union: everything in either set"),
+        (["∩"], "∩ — intersection: items shared by both sets"),
+        (["∀"], "∀ — for every"),
+        (["∃"], "∃ — there exists"),
+        (["⇒", "→"], "⇒ / → — leads to, maps to, or implies"),
+        (["⇔", "↔"], "⇔ / ↔ — if and only if"),
+        (["‖"], "‖ ‖ — norm: the size or length of a vector"),
+        (["lim"], "lim — limit: the value approached"),
+        (["log"], "log — logarithm: the exponent needed to make a number"),
+        (["ln"], "ln — natural logarithm"),
+        (["exp"], "exp — exponential function"),
+        (["α", "β", "γ", "δ", "θ", "λ", "μ", "σ", "π", "ρ", "τ", "φ", "ω"], "Greek letter — a variable or parameter; its precise meaning comes from the surrounding text")
+    ]
+
+    static func notes(in formula: String, excluding existing: [String] = []) -> [String] {
+        entries.compactMap { entry in
+            guard entry.symbols.contains(where: formula.contains),
+                  !existing.contains(entry.meaning) else { return nil }
+            return entry.meaning
+        }.prefix(12).map { $0 }
+    }
+}
+
+enum FormulaLearningSupport {
+    static func explanation(aiExplanation: String, formula: String) -> String {
+        let trimmed = aiExplanation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty || trimmed.lowercased().hasPrefix("central displayed equation") else {
+            return trimmed
+        }
+        if formula.contains("Var"), formula.contains("E("), formula.contains("Y") {
+            return "This formula measures how far predictions are from the real outcome on average. It splits that total prediction error into a part that can be improved by making a better model and a part caused by unavoidable randomness."
+        }
+        if formula.contains("Σ") || formula.contains("∑") {
+            return "This formula combines many values into one result. The Σ symbol means to calculate each indicated term and add all of them together."
+        }
+        if formula.contains("∫") {
+            return "This formula adds up many tiny pieces continuously to find a total, such as an area, distance, or accumulated change."
+        }
+        return "This formula is a rule for turning the values on the right into the result on the left. Work through the operations in order, then interpret the final result in the context of the page."
+    }
+
+    static func steps(for formula: String) -> String {
+        if formula.contains("Var"), formula.contains("E("), formula.contains("Y") {
+            return "1. Find the prediction f̂(X).\n2. Compare it with the real outcome Y.\n3. Square that difference so larger mistakes count more.\n4. Average the squared mistakes, then separate the improvable and unavoidable parts."
+        }
+        if formula.contains("Σ") || formula.contains("∑") {
+            return "1. Start at the lower number beneath Σ.\n2. Calculate the expression for each value up to the upper number.\n3. Add those results together."
+        }
+        if formula.contains("∫") {
+            return "1. Identify the range shown below and above ∫.\n2. Treat the expression as tiny pieces across that range.\n3. Add all the pieces to get the total."
+        }
+        return "1. Identify the input values.\n2. Calculate the right-hand side from left to right.\n3. Use the resulting value as the quantity on the left."
+    }
+}
+
 enum TextbookURLResolver {
     static func resolve(_ textbook: TextbookSummary) -> URL? {
         if let bookmark = textbook.bookmark {
@@ -805,7 +1018,7 @@ final class ReaderViewController: NSViewController {
     private let store: TextbookStore
     private let analyzer: ConfiguredMathAnalyzer
     private let onBack: () -> Void
-    private let pdfView = PDFView()
+    private let pdfView = HighlightAwarePDFView()
     private let petOverlay = PetOverlayView()
     private let sidebar = NSTextView()
     private let pageLabel = NSTextField(labelWithString: "Opening textbook...")
@@ -821,6 +1034,8 @@ final class ReaderViewController: NSViewController {
     private var securityScopedURL: URL?
     private var petPosition = CodexPetPositionStore.load()
     private var revealedHighlightKeys: [Int: Set<String>] = [:]
+    private var annotationPassages: [ObjectIdentifier: ImportantPassage] = [:]
+    private var hoveredAnnotationID: ObjectIdentifier?
 
     init(textbook: TextbookSummary, store: TextbookStore, analyzer: ConfiguredMathAnalyzer, onBack: @escaping () -> Void) {
         self.textbook = textbook
@@ -848,6 +1063,9 @@ final class ReaderViewController: NSViewController {
         pdfView.displayDirection = .vertical
         pdfView.backgroundColor = ReaderPalette.canvas
         pdfView.translatesAutoresizingMaskIntoConstraints = false
+        pdfView.onPointerMoved = { [weak self] point in
+            self?.updateInspectorHover(at: point)
+        }
         sidebar.isEditable = false
         sidebar.drawsBackground = true
         sidebar.backgroundColor = ReaderPalette.raised
@@ -1252,6 +1470,30 @@ final class ReaderViewController: NSViewController {
                 return
             }
 
+            if let reusable = try await store.reusableAnalysis(
+                textFingerprint: page.fingerprint,
+                identity: analyzer.identity,
+                pageIndex: pageIndex
+            ) {
+                try await store.saveAnalysis(
+                    textbookID: textbook.id,
+                    pageIndex: pageIndex,
+                    identity: analyzer.identity,
+                    passages: reusable
+                )
+                AxiomLogger.info(
+                    "Shared page cache hit. textbookID=\(textbook.id), page=\(pageIndex + 1), passages=\(reusable.count)"
+                )
+                if currentPageIndex == pageIndex {
+                    revealHighlights(
+                        reusable,
+                        status: reusable.isEmpty ? "No highlights found" : "Highlighted",
+                        note: "Loaded from the matching page-text cache."
+                    )
+                }
+                return
+            }
+
             try await store.markAnalyzing(textbookID: textbook.id, pageIndex: pageIndex, identity: analyzer.identity)
             clearRenderedHighlights(on: pageIndex)
             if currentPageIndex == pageIndex {
@@ -1323,9 +1565,7 @@ final class ReaderViewController: NSViewController {
     private func render(_ passages: [ImportantPassage], status: String, note: String) {
         guard let document, let page = document.page(at: currentPageIndex) else { return }
         let renderStarted = ContinuousClock.now
-        for annotation in page.annotations where annotation.userName == "AxiomAutoHighlight" {
-            page.removeAnnotation(annotation)
-        }
+        removeAutoHighlights(from: page)
         var annotationCount = 0
         for passage in passages where passage.pageIndex == currentPageIndex {
             annotationCount += addAnnotations(for: passage, on: page)
@@ -1334,7 +1574,7 @@ final class ReaderViewController: NSViewController {
         AxiomLogger.info(
             "Page annotations rendered. page=\(currentPageIndex + 1), passages=\(passages.count), annotations=\(annotationCount), durationMs=\(AxiomLogger.durationMilliseconds(since: renderStarted))"
         )
-        renderSidebar(status: status, passages: passages, note: note)
+        showEmptyInspector()
     }
 
     private func revealHighlights(_ passages: [ImportantPassage], status: String, note: String) {
@@ -1365,10 +1605,12 @@ final class ReaderViewController: NSViewController {
         }
         guard !candidates.isEmpty else {
             petOverlay.setActivityState(.idle)
-            renderSidebar(status: "Watching your place", passages: passages, note: "Scroll to an unmarked important passage and Codex will meet you there.")
+            // Highlights were already drawn for this viewport. The sidebar is an inspector,
+            // never a second list of highlights, so leave it ready for the next hover.
+            showEmptyInspector()
             return
         }
-        renderSidebar(status: "Codex highlighting", passages: [], note: note)
+        showEmptyInspector()
         let targetProvider: (Int) -> NSPoint? = { [weak self] index in
             guard let self, candidates.indices.contains(index) else { return nil }
             let passage = candidates[index].passage
@@ -1387,7 +1629,7 @@ final class ReaderViewController: NSViewController {
             self.pdfView.setNeedsDisplay(self.pdfView.bounds)
         }, completion: { [weak self] in
             guard let self, self.currentPageIndex == pageIndex else { return }
-            self.renderSidebar(status: status, passages: passages, note: "Saved to the local metadata cache.")
+            self.showEmptyInspector()
         })
     }
 
@@ -1400,6 +1642,7 @@ final class ReaderViewController: NSViewController {
             annotation.color = NSColor.systemYellow.withAlphaComponent(0.55)
             annotation.userName = "AxiomAutoHighlight"
             page.addAnnotation(annotation)
+            annotationPassages[ObjectIdentifier(annotation)] = passage
             count += 1
         }
         return count
@@ -1412,12 +1655,89 @@ final class ReaderViewController: NSViewController {
     private func clearRenderedHighlights(on pageIndex: Int) {
         revealedHighlightKeys[pageIndex] = []
         guard let page = document?.page(at: pageIndex) else { return }
+        removeAutoHighlights(from: page)
+    }
+
+    private func removeAutoHighlights(from page: PDFPage) {
         for annotation in page.annotations where annotation.userName == "AxiomAutoHighlight" {
+            annotationPassages.removeValue(forKey: ObjectIdentifier(annotation))
             page.removeAnnotation(annotation)
         }
+        hoveredAnnotationID = nil
+    }
+
+    private func updateInspectorHover(at point: NSPoint?) {
+        guard let point, let annotation = annotation(at: point) else {
+            if hoveredAnnotationID != nil {
+                hoveredAnnotationID = nil
+                showEmptyInspector()
+            }
+            return
+        }
+        let id = ObjectIdentifier(annotation)
+        guard id != hoveredAnnotationID, let passage = annotationPassages[id] else { return }
+        hoveredAnnotationID = id
+        showInspector(for: passage)
+    }
+
+    private func annotation(at point: NSPoint) -> PDFAnnotation? {
+        guard let document else { return nil }
+        for pageIndex in 0..<document.pageCount {
+            guard let page = document.page(at: pageIndex) else { continue }
+            for annotation in page.annotations where annotation.userName == "AxiomAutoHighlight" {
+                let bounds = pdfView.convert(annotation.bounds, from: page)
+                if bounds.contains(point) { return annotation }
+            }
+        }
+        return nil
+    }
+
+    private func showEmptyInspector() {
+        let content = NSMutableAttributedString()
+        content.append(NSAttributedString(string: "Highlight details\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
+        content.append(NSAttributedString(string: "\nHover over a highlight to see why it matters.\n", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]))
+        sidebar.textStorage?.setAttributedString(content)
+    }
+
+    private func showInspector(for passage: ImportantPassage) {
+        let content = NSMutableAttributedString()
+        if passage.kind == "equation" {
+            let formula = passage.formulaDisplay?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayedFormula = FormulaDisplayFormatter.preferredDisplay(
+                aiDisplay: formula,
+                source: passage.sentence
+            )
+            content.append(NSAttributedString(string: "Formula\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
+            content.append(NSAttributedString(string: displayedFormula + "\n\n", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 15, weight: .medium), .foregroundColor: NSColor.labelColor]))
+            appendInspectorSection("What it means", FormulaLearningSupport.explanation(aiExplanation: passage.explanation, formula: displayedFormula), to: content)
+            let symbols = FormulaDisplayFormatter.symbolNotes(for: displayedFormula)
+            if !symbols.isEmpty { appendInspectorSection("Symbols", symbols.joined(separator: "\n"), to: content) }
+            appendInspectorSection("How to use it", FormulaLearningSupport.steps(for: displayedFormula), to: content)
+        } else {
+            content.append(NSAttributedString(string: "Why this matters\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
+            content.append(NSAttributedString(string: passage.sentence + "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold)]))
+            appendInspectorSection("Why", passage.explanation, to: content)
+            appendInspectorSection("In simple terms", "This is a key idea for understanding the section.", to: content)
+            if !passage.concepts.isEmpty {
+                appendInspectorSection("Connection", "Related: " + passage.concepts.joined(separator: ", ") + ".", to: content)
+            }
+        }
+        sidebar.textStorage?.setAttributedString(content)
+    }
+
+    private func appendInspectorSection(_ title: String, _ body: String, to content: NSMutableAttributedString, monospaced: Bool = false) {
+        content.append(NSAttributedString(string: title + "\n", attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor]))
+        content.append(NSAttributedString(string: body + "\n\n", attributes: [.font: monospaced ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]))
     }
 
     private func renderSidebar(status: String, passages: [ImportantPassage], note: String) {
+        // The normal sidebar is deliberately an empty hover inspector. In particular, do
+        // not reintroduce the old list after a cache hit, page settle, or pet animation.
+        // Errors remain visible because they tell the reader what action is needed.
+        guard ["Failed", "Rate limited", "OCR required", "Unavailable"].contains(status) else {
+            showEmptyInspector()
+            return
+        }
         let content = NSMutableAttributedString()
         content.append(NSAttributedString(
             string: "Page \(currentPageIndex + 1)\n",

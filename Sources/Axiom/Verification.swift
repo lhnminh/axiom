@@ -20,12 +20,106 @@ enum AxiomVerification {
                 kind: "equation",
                 explanation: "Defines variance.",
                 importance: 9,
-                concepts: ["variance"]
+                concepts: ["variance"],
+                display_formula: "Var(X) = E[(X − E[X])²]"
             )
         ]
         check(
-            MathAnalysisPrompt.mapHighlights(equationCandidates, onto: equationPage).count == 1,
-            "Equation matching tolerates PDF line breaks",
+            MathAnalysisPrompt.mapHighlights(equationCandidates, onto: equationPage).first?.formulaDisplay
+                == "Var(X) = E[(X − E[X])²]",
+            "Equation matching and clean AI formula display survive PDF line breaks",
+            failures: &failures
+        )
+
+        let overlapPage = PageText(pageIndex: 0, text: "The identity is E[X] = μ + σ.")
+        let overlapCandidates = [
+            MathHighlightCandidate(page_index: 0, exact_text: "E[X] = μ + σ.", kind: "equation", explanation: "Core identity.", importance: 9, concepts: ["expectation"]),
+            MathHighlightCandidate(page_index: 0, exact_text: "μ + σ", kind: "equation", explanation: "Contained expression.", importance: 8, concepts: ["mean"])
+        ]
+        check(
+            MathAnalysisPrompt.mapHighlights(overlapCandidates, onto: overlapPage).count == 1,
+            "Overlapping highlights are reduced to one passage",
+            failures: &failures
+        )
+
+        let prosePage = PageText(pageIndex: 0, text: "The inference paradigm studies relationships between variables.")
+        let proseCandidates = [
+            MathHighlightCandidate(page_index: 0, exact_text: "The inference paradigm studies relationships between variables.", kind: "concept", explanation: "Too broad.", importance: 9, concepts: ["inference"]),
+            MathHighlightCandidate(page_index: 0, exact_text: "inference paradigm", kind: "concept", explanation: "Key term.", importance: 8, concepts: ["inference"])
+        ]
+        let concise = MathAnalysisPrompt.mapHighlights(proseCandidates, onto: prosePage)
+        check(
+            concise.count == 1 && concise[0].sentence == "inference paradigm",
+            "Prose highlights are limited to concise key phrases",
+            failures: &failures
+        )
+
+        let formulaPage = PageText(pageIndex: 0, text: "The identity follows:\nE[X] = μ + σ\nwhere μ is the mean.")
+        let formulaFallback = MathAnalysisPrompt.mapHighlights([
+            MathHighlightCandidate(page_index: 0, exact_text: "mean", kind: "concept", explanation: "Key term.", importance: 8, concepts: ["mean"])
+        ], onto: formulaPage)
+        check(
+            formulaFallback.first?.kind == "equation",
+            "Displayed equations are retained when the model omits them",
+            failures: &failures
+        )
+
+        let interleavedPDFFormula = """
+        E(Y−
+        ˆ
+        Y )2 = E[f (X) + ϵ−
+        ˆ
+        = [f (X)−
+        f (X)]2
+        Reducible
+        ˆ
+        f (X)]2
+        + Var(ϵ)
+        Irreducible
+        , (2.3)
+        """
+        let restoredInterleavedFormula = FormulaDisplayFormatter.display(interleavedPDFFormula)
+        check(
+            restoredInterleavedFormula == "E(Y− Ŷ)² = E[f(X) + ϵ− f̂(X)]²\n= [f(X)− f̂(X)]² + Var(ϵ)",
+            "Interleaved PDF equation rows are restored without reference numbers",
+            failures: &failures
+        )
+
+        let missingHatAIFormula = "E(Y − Ŷ)² = E[f(X) + ε − f̂(X)]² = [f(X) − f(X)]² + Var(ε)"
+        let preferredFormula = FormulaDisplayFormatter.preferredDisplay(
+            aiDisplay: missingHatAIFormula,
+            source: interleavedPDFFormula
+        )
+        check(
+            preferredFormula.components(separatedBy: "f̂").count - 1 >= 2
+                && FormulaNotation.notes(in: "∑ αᵢ ≤ ∞").count >= 3,
+            "Lost notation marks fall back to PDF notation and advanced symbols are explained",
+            failures: &failures
+        )
+
+        let malformedEquation = MathHighlightCandidate(
+            page_index: 0,
+            exact_text: "ˆ\nY )2 = E[f (X)]2\nˆ",
+            kind: "equation",
+            explanation: "Malformed extraction.",
+            importance: 10,
+            concepts: [],
+            display_formula: ""
+        )
+        let boundedFallback = MathAnalysisPrompt.mapHighlights([malformedEquation], onto: PageText(pageIndex: 0, text: interleavedPDFFormula))
+        check(
+            boundedFallback.first?.kind == "equation" && boundedFallback.first?.sentence.hasPrefix("E(Y−") == true,
+            "Malformed equation spans fall back to the bounded displayed formula",
+            failures: &failures
+        )
+
+        check(
+            FormulaLearningSupport.explanation(
+                aiExplanation: "Central displayed equation detected from the page text.",
+                formula: "E(Y − f̂(X))² = Var(ε)"
+            ).contains("predictions")
+                && FormulaLearningSupport.steps(for: "Σᵢ₌₁ⁿ xᵢ").contains("Add those results together"),
+            "Formula fallback explains prediction error and sum notation in plain words",
             failures: &failures
         )
 
@@ -93,7 +187,8 @@ enum AxiomVerification {
             kind: "concept",
             explanation: "A model-fit measure.",
             score: 7,
-            concepts: ["training error"]
+            concepts: ["training error"],
+            formulaDisplay: "E = observed − predicted"
         )
         try await store.markAnalyzing(textbookID: textbook.id, pageIndex: 0, identity: identity)
         try await store.saveAnalysis(textbookID: textbook.id, pageIndex: 0, identity: identity, passages: [passage])
@@ -101,7 +196,9 @@ enum AxiomVerification {
             textbookID: textbook.id,
             pageIndex: 0,
             identity: identity
-        ), highlights.count == 1, highlights[0].concepts == ["training error"] else {
+        ), highlights.count == 1,
+              highlights[0].concepts == ["training error"],
+              highlights[0].passage.formulaDisplay == "E = observed − predicted" else {
             throw VerificationError.failed("Stored highlights were not returned from cache.")
         }
         let changed = AnalysisIdentity(provider: "Gemini", model: "changed-model", promptVersion: "verify-v1")
@@ -111,6 +208,25 @@ enum AxiomVerification {
             identity: changed
         ) else {
             throw VerificationError.failed("A model change did not invalidate the cache.")
+        }
+
+        let matchingTextbook = try await store.registerTextbook(
+            url: URL(fileURLWithPath: "/tmp/axiom-same-page-in-another-pdf.pdf"),
+            bookmark: nil
+        )
+        try await store.beginExtraction(textbookID: matchingTextbook.id, fingerprint: "book-v2", pageCount: 1)
+        try await store.saveExtractedPage(
+            textbookID: matchingTextbook.id,
+            pageIndex: 0,
+            text: "Definition: Training error measures fit on observed data."
+        )
+        guard let matchingPage = try await store.page(textbookID: matchingTextbook.id, pageIndex: 0),
+              let reusable = try await store.reusableAnalysis(
+                textFingerprint: matchingPage.fingerprint,
+                identity: identity,
+                pageIndex: 0
+              ), reusable.count == 1, reusable[0].sentence == "Training error" else {
+            throw VerificationError.failed("Matching page text did not reuse the shared analysis cache.")
         }
     }
 

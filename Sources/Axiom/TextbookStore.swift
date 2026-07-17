@@ -249,6 +249,26 @@ actor TextbookStore {
         }
     }
 
+    func reusableAnalysis(
+        textFingerprint: String,
+        identity: AnalysisIdentity,
+        pageIndex: Int
+    ) throws -> [ImportantPassage]? {
+        let statement = try prepare("""
+        SELECT passages_json FROM page_analysis_cache
+        WHERE text_fingerprint = ? AND analysis_provider = ? AND analysis_model = ? AND prompt_version = ?;
+        """)
+        defer { sqlite3_finalize(statement) }
+        bind(textFingerprint, at: 1, in: statement)
+        bind(identity.provider, at: 2, in: statement)
+        bind(identity.model, at: 3, in: statement)
+        bind(identity.promptVersion, at: 4, in: statement)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        let payload = string(statement, column: 0)
+        let cached = try JSONDecoder().decode([CachedAnalysisPassage].self, from: Data(payload.utf8))
+        return cached.map { $0.passage(pageIndex: pageIndex) }
+    }
+
     func markAnalyzing(textbookID: Int64, pageIndex: Int, identity: AnalysisIdentity) throws {
         let statement = try prepare("""
         UPDATE pages SET analysis_status = 'analyzing', analysis_provider = ?, analysis_model = ?,
@@ -271,6 +291,9 @@ actor TextbookStore {
         identity: AnalysisIdentity,
         passages: [ImportantPassage]
     ) throws {
+        guard let textFingerprint = try page(textbookID: textbookID, pageIndex: pageIndex)?.fingerprint else {
+            throw TextbookStoreError.database("Cannot cache analysis for a missing page.")
+        }
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             let delete = try prepare("DELETE FROM highlights WHERE textbook_id = ? AND page_index = ?;")
@@ -282,8 +305,8 @@ actor TextbookStore {
             for passage in passages {
                 let insert = try prepare("""
                 INSERT INTO highlights(textbook_id, page_index, exact_text, range_location, range_length,
-                    kind, explanation, importance, concepts_json)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    kind, explanation, importance, concepts_json, formula_display)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """)
                 sqlite3_bind_int64(insert, 1, textbookID)
                 sqlite3_bind_int(insert, 2, Int32(pageIndex))
@@ -294,6 +317,7 @@ actor TextbookStore {
                 bind(passage.explanation, at: 7, in: insert)
                 sqlite3_bind_int(insert, 8, Int32(passage.score))
                 bind(Self.encodeConcepts(passage.concepts), at: 9, in: insert)
+                bind(passage.formulaDisplay, at: 10, in: insert)
                 try stepDone(insert)
                 let highlightID = sqlite3_last_insert_rowid(database)
                 sqlite3_finalize(insert)
@@ -328,6 +352,28 @@ actor TextbookStore {
             try? execute("ROLLBACK;")
             throw error
         }
+        try saveReusableAnalysis(textFingerprint: textFingerprint, identity: identity, passages: passages)
+    }
+
+    private func saveReusableAnalysis(
+        textFingerprint: String,
+        identity: AnalysisIdentity,
+        passages: [ImportantPassage]
+    ) throws {
+        let payload = try String(data: JSONEncoder().encode(passages.map(CachedAnalysisPassage.init)), encoding: .utf8)
+        let statement = try prepare("""
+        INSERT OR IGNORE INTO page_analysis_cache(
+            text_fingerprint, analysis_provider, analysis_model, prompt_version, passages_json, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?);
+        """)
+        defer { sqlite3_finalize(statement) }
+        bind(textFingerprint, at: 1, in: statement)
+        bind(identity.provider, at: 2, in: statement)
+        bind(identity.model, at: 3, in: statement)
+        bind(identity.promptVersion, at: 4, in: statement)
+        bind(payload, at: 5, in: statement)
+        bind(ISO8601DateFormatter().string(from: Date()), at: 6, in: statement)
+        try stepDone(statement)
     }
 
     func failAnalysis(textbookID: Int64, pageIndex: Int, identity: AnalysisIdentity, error: String) throws {
@@ -389,7 +435,7 @@ actor TextbookStore {
 
     private func highlights(textbookID: Int64, pageIndex: Int) throws -> [StoredHighlight] {
         let statement = try prepare("""
-        SELECT exact_text, range_location, range_length, kind, explanation, importance, concepts_json
+        SELECT exact_text, range_location, range_length, kind, explanation, importance, concepts_json, formula_display
         FROM highlights WHERE textbook_id = ? AND page_index = ? ORDER BY id;
         """)
         defer { sqlite3_finalize(statement) }
@@ -405,7 +451,8 @@ actor TextbookStore {
                 kind: string(statement, column: 3),
                 explanation: string(statement, column: 4),
                 importance: Int(sqlite3_column_int(statement, 5)),
-                concepts: Self.decodeConcepts(string(statement, column: 6))
+                concepts: Self.decodeConcepts(string(statement, column: 6)),
+                formulaDisplay: optionalString(statement, column: 7)
             ))
         }
         return results
@@ -499,7 +546,8 @@ actor TextbookStore {
             kind TEXT NOT NULL,
             explanation TEXT NOT NULL,
             importance INTEGER NOT NULL,
-            concepts_json TEXT NOT NULL DEFAULT '[]'
+            concepts_json TEXT NOT NULL DEFAULT '[]',
+            formula_display TEXT
         );
         CREATE INDEX IF NOT EXISTS highlights_page ON highlights(textbook_id, page_index);
         CREATE TABLE IF NOT EXISTS concepts(
@@ -525,7 +573,35 @@ actor TextbookStore {
             updated_at TEXT NOT NULL,
             PRIMARY KEY(textbook_id, page_index)
         );
+        CREATE TABLE IF NOT EXISTS page_analysis_cache(
+            text_fingerprint TEXT NOT NULL,
+            analysis_provider TEXT NOT NULL,
+            analysis_model TEXT NOT NULL,
+            prompt_version TEXT NOT NULL,
+            passages_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(text_fingerprint, analysis_provider, analysis_model, prompt_version)
+        );
         """, database: database)
+        try addColumnIfMissing("formula_display", to: "highlights", definition: "TEXT", database: database)
+    }
+
+    private static func addColumnIfMissing(
+        _ column: String,
+        to table: String,
+        definition: String,
+        database: OpaquePointer?
+    ) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "PRAGMA table_info(\(table));", -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw TextbookStoreError.database("Could not inspect the \(table) table.")
+        }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            if String(cString: sqlite3_column_text(statement, 1)) == column { return }
+        }
+        try execute("ALTER TABLE \(table) ADD COLUMN \(column) \(definition);", database: database)
     }
 
     private func execute(_ sql: String) throws {

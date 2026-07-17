@@ -9,6 +9,28 @@ struct ImportantPassage: Sendable {
     let explanation: String
     let score: Int
     let concepts: [String]
+    /// A readable, AI-reconstructed formula. The PDF text remains the source used to locate it.
+    let formulaDisplay: String?
+
+    init(
+        pageIndex: Int,
+        sentence: String,
+        range: NSRange,
+        kind: String,
+        explanation: String,
+        score: Int,
+        concepts: [String],
+        formulaDisplay: String? = nil
+    ) {
+        self.pageIndex = pageIndex
+        self.sentence = sentence
+        self.range = range
+        self.kind = kind
+        self.explanation = explanation
+        self.score = score
+        self.concepts = concepts
+        self.formulaDisplay = formulaDisplay
+    }
 }
 
 struct PageText: Sendable {
@@ -23,10 +45,64 @@ struct MathHighlightCandidate: Codable, Sendable {
     let explanation: String
     let importance: Int
     let concepts: [String]?
+    let display_formula: String?
+
+    init(
+        page_index: Int,
+        exact_text: String,
+        kind: String,
+        explanation: String,
+        importance: Int,
+        concepts: [String]?,
+        display_formula: String? = nil
+    ) {
+        self.page_index = page_index
+        self.exact_text = exact_text
+        self.kind = kind
+        self.explanation = explanation
+        self.importance = importance
+        self.concepts = concepts
+        self.display_formula = display_formula
+    }
 }
 
 struct MathHighlightResponse: Codable, Sendable {
     let highlights: [MathHighlightCandidate]
+}
+
+struct CachedAnalysisPassage: Codable, Sendable {
+    let exactText: String
+    let location: Int
+    let length: Int
+    let kind: String
+    let explanation: String
+    let importance: Int
+    let concepts: [String]
+    let formulaDisplay: String?
+
+    init(_ passage: ImportantPassage) {
+        exactText = passage.sentence
+        location = passage.range.location
+        length = passage.range.length
+        kind = passage.kind
+        explanation = passage.explanation
+        importance = passage.score
+        concepts = passage.concepts
+        formulaDisplay = passage.formulaDisplay
+    }
+
+    func passage(pageIndex: Int) -> ImportantPassage {
+        ImportantPassage(
+            pageIndex: pageIndex,
+            sentence: exactText,
+            range: NSRange(location: location, length: length),
+            kind: kind,
+            explanation: explanation,
+            score: importance,
+            concepts: concepts,
+            formulaDisplay: formulaDisplay
+        )
+    }
 }
 
 struct TextbookSummary: Identifiable, Sendable {
@@ -60,6 +136,29 @@ struct StoredHighlight: Sendable {
     let explanation: String
     let importance: Int
     let concepts: [String]
+    let formulaDisplay: String?
+
+    init(
+        pageIndex: Int,
+        exactText: String,
+        location: Int,
+        length: Int,
+        kind: String,
+        explanation: String,
+        importance: Int,
+        concepts: [String],
+        formulaDisplay: String? = nil
+    ) {
+        self.pageIndex = pageIndex
+        self.exactText = exactText
+        self.location = location
+        self.length = length
+        self.kind = kind
+        self.explanation = explanation
+        self.importance = importance
+        self.concepts = concepts
+        self.formulaDisplay = formulaDisplay
+    }
 
     var passage: ImportantPassage {
         ImportantPassage(
@@ -69,13 +168,14 @@ struct StoredHighlight: Sendable {
             kind: kind,
             explanation: explanation,
             score: importance,
-            concepts: concepts
+            concepts: concepts,
+            formulaDisplay: formulaDisplay
         )
     }
 }
 
 struct AnalysisIdentity: Sendable {
-    static let promptVersion = "page-highlights-v2"
+    static let promptVersion = "page-highlights-v10"
 
     let provider: String
     let model: String

@@ -1,13 +1,22 @@
 import Foundation
 
 enum MathAnalysisPrompt {
+    static let maximumHighlightsPerPage = 5
+    private static let maximumKeywordWords = 5
+
     static let instructions = """
     You are Axiom, an AI reading assistant for mathematics textbooks.
-    Identify the important text spans on the supplied page that should be visually highlighted.
-    Include definitions, theorems, lemmas, corollaries, displayed equations, notation, assumptions, and central concepts. Do not omit a displayed formula merely because it is short.
+    Select at most 5 spans that a student must remember to understand this page. First identify the page's single primary learning objective, then select the central formula or named statement that expresses it. Add supporting spans only when they are necessary to interpret that primary item.
+    If PAGE_TEXT contains a mathematical equality (`=`), you MUST return the most central complete equation as kind `equation` with importance 10 before returning any prose keywords.
+    Rank importance strictly: 10 = the page's main theorem, definition, or complete displayed equation; 8-9 = an indispensable assumption or interpretation; 6-7 = essential notation; 1-5 = do not return it. Prefer one complete equation over its pieces and one complete statement over a surrounding paragraph.
+    For prose, exact_text MUST be a compact keyword or noun phrase of 1 to 5 words, such as "prediction setting", "inference paradigm", or "irreducible error". Never return a full sentence, a clause beginning with "This" or "In this", or an explanatory sentence. Complete displayed equations are the only exception and may be returned in full.
+    For every equation, also return display_formula: a clean, self-contained, human-readable Unicode display of that exact formula. Restore its visual reading order, line breaks, superscripts, subscripts, fractions, Greek letters, and aligned equals signs. Do not include prose labels such as "Reducible". This field is for display only, so it may correct PDF extraction order; exact_text must still be copied exactly from PAGE_TEXT. For non-equations, return an empty display_formula.
+    Preserve every decorated symbol exactly in display_formula: for example, f̂(X) is not the same as f(X), and repeated appearances of f̂ must never be changed into f. Use a combining hat (f̂), not a detached caret (^), for an estimated symbol.
+    For an equation, explanation MUST be 2 to 4 short, student-friendly sentences. Explain what the formula calculates, what each side is doing, and how a student would use it. Translate advanced notation into plain words: Σ/∑ means "add all the indicated values", ∫ means "add tiny pieces continuously", E(·) means "the average", and a superscript 2 means "square it". Never say only that an equation was detected, and avoid unexplained technical jargon.
+    Do not highlight routine prose, examples, figure captions, transitions, repeated terminology, or every related concept. Never return both a formula and one of its subexpressions, or overlapping parts of the same statement.
     exact_text is used to locate text in the PDF. It MUST be copied character-for-character from PAGE_TEXT, including mathematical symbols, punctuation, and spacing. Never rewrite a formula as LaTeX, prose, or an equivalent expression. For a formula, return the shortest distinctive exact fragment available in PAGE_TEXT; include a nearby label or sentence only when the formula alone is not distinctive.
     Keep each span focused and non-overlapping. Prefer a complete equation or a complete named statement over a vague surrounding paragraph.
-    concepts should contain concise canonical names for concepts discussed by the highlighted span.
+    Before responding, rank all candidate spans internally and return only the highest-ranked non-overlapping ones. concepts should contain concise canonical names for concepts discussed by the highlighted span.
     Do not solve exercises. Do not include generic prose.
     """
 
@@ -16,8 +25,12 @@ enum MathAnalysisPrompt {
     }
 
     static func mapHighlights(_ highlights: [MathHighlightCandidate], onto page: PageText) -> [ImportantPassage] {
-        var seen: Set<String> = []
-        return highlights.compactMap { highlight in
+        var seenText: Set<String> = []
+        let mapped = highlights.compactMap { highlight -> ImportantPassage? in
+            guard highlight.kind != "equation" || isUsableEquationSpan(highlight.exact_text) else {
+                AxiomLogger.error("Discarded malformed equation span. page=\(page.pageIndex + 1), text=\(AxiomLogger.snippet(highlight.exact_text, limit: 180))")
+                return nil
+            }
             guard highlight.page_index == page.pageIndex,
                   let range = rangeForHighlight(highlight.exact_text, in: page.text) else {
                 AxiomLogger.error(
@@ -25,8 +38,10 @@ enum MathAnalysisPrompt {
                 )
                 return nil
             }
-            let key = "\(range.location):\(range.length):\(highlight.kind)"
-            guard seen.insert(key).inserted else { return nil }
+            let normalizedText = TextFingerprint.normalized(highlight.exact_text).lowercased()
+            guard !normalizedText.isEmpty,
+                  isConciseHighlight(highlight.exact_text, kind: highlight.kind),
+                  seenText.insert(normalizedText).inserted else { return nil }
             return ImportantPassage(
                 pageIndex: page.pageIndex,
                 sentence: highlight.exact_text,
@@ -34,9 +49,66 @@ enum MathAnalysisPrompt {
                 kind: highlight.kind,
                 explanation: highlight.explanation,
                 score: min(max(highlight.importance, 1), 10),
-                concepts: highlight.concepts ?? []
+                concepts: highlight.concepts ?? [],
+                formulaDisplay: cleanFormulaDisplay(highlight.display_formula, kind: highlight.kind)
             )
         }
+        let hasEquation = mapped.contains { $0.kind == "equation" }
+        let fallbackEquations = hasEquation ? [] : EquationFallback.passages(on: page)
+        return selectHighlights(mapped + fallbackEquations)
+    }
+
+    private static func selectHighlights(_ passages: [ImportantPassage]) -> [ImportantPassage] {
+        let ranked = passages.sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            let lhsPriority = kindPriority(lhs.kind)
+            let rhsPriority = kindPriority(rhs.kind)
+            if lhsPriority != rhsPriority { return lhsPriority > rhsPriority }
+            if lhs.range.length != rhs.range.length { return lhs.range.length > rhs.range.length }
+            return lhs.range.location < rhs.range.location
+        }
+        var selected: [ImportantPassage] = []
+        for passage in ranked where selected.count < maximumHighlightsPerPage {
+            guard !selected.contains(where: { rangesOverlap($0.range, passage.range) }) else { continue }
+            selected.append(passage)
+        }
+        return selected.sorted { $0.range.location < $1.range.location }
+    }
+
+    private static func rangesOverlap(_ lhs: NSRange, _ rhs: NSRange) -> Bool {
+        NSIntersectionRange(lhs, rhs).length > 0
+    }
+
+    private static func kindPriority(_ kind: String) -> Int {
+        switch kind {
+        case "theorem", "lemma", "corollary", "definition", "equation": 3
+        case "notation": 2
+        default: 1
+        }
+    }
+
+    private static func isConciseHighlight(_ text: String, kind: String) -> Bool {
+        if kind == "equation" { return true }
+        let words = text.split(whereSeparator: \.isWhitespace)
+        guard (1...maximumKeywordWords).contains(words.count) else { return false }
+        let first = words.first?.lowercased() ?? ""
+        return !["this", "that", "these", "those", "it", "we", "in"].contains(first)
+    }
+
+    private static func cleanFormulaDisplay(_ value: String?, kind: String) -> String? {
+        guard kind == "equation",
+              let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              value.count <= 1_200 else { return nil }
+        return value
+    }
+
+    private static func isUsableEquationSpan(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("="),
+              let first = trimmed.first,
+              !["ˆ", "^", "=", "+", "−", "-"].contains(first) else { return false }
+        return trimmed.count >= 8
     }
 
     private static func rangeForHighlight(_ highlightText: String, in pageText: String) -> NSRange? {
@@ -68,6 +140,55 @@ enum MathAnalysisPrompt {
             .joined(separator: #"[\s\p{P}]*"#)
         guard let regex = try? NSRegularExpression(pattern: prosePattern, options: [.caseInsensitive]) else { return nil }
         return regex.firstMatch(in: pageText, range: NSRange(location: 0, length: nsPageText.length))?.range
+    }
+}
+
+private enum EquationFallback {
+    static func passages(on page: PageText) -> [ImportantPassage] {
+        let lines = page.text.components(separatedBy: .newlines)
+        var candidates: [(text: String, start: Int)] = []
+
+        for index in lines.indices where lines[index].contains("=") && isMathLine(lines[index]) {
+            var start = index
+            while start > 0, index - start < 4, isMathLine(lines[start - 1]) { start -= 1 }
+            var end = index
+            while end + 1 < lines.count, end - index < 8, isMathLine(lines[end + 1]) { end += 1 }
+            var selectedLines = Array(lines[start...end])
+            while let last = selectedLines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  ["ˆ", "^", "′"].contains(last) {
+                selectedLines.removeLast()
+            }
+            let text = selectedLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard text.count >= 8 else { continue }
+            candidates.append((text, start))
+        }
+
+        guard let candidate = candidates.max(by: { $0.text.count < $1.text.count }),
+              let range = exactRange(candidate.text, in: page.text) else { return [] }
+        return [
+            ImportantPassage(
+                pageIndex: page.pageIndex,
+                sentence: candidate.text,
+                range: range,
+                kind: "equation",
+                explanation: "Central displayed equation detected from the page text.",
+                score: 10,
+                concepts: [],
+                formulaDisplay: nil
+            )
+        ]
+    }
+
+    private static func isMathLine(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, trimmed.count <= 64 else { return false }
+        if ["Reducible", "Irreducible"].contains(trimmed) { return true }
+        return trimmed.contains("=") || trimmed.rangeOfCharacter(from: CharacterSet(charactersIn: "ˆϵ−+[]()²")) != nil
+    }
+
+    private static func exactRange(_ text: String, in pageText: String) -> NSRange? {
+        let range = (pageText as NSString).range(of: text)
+        return range.location == NSNotFound ? nil : range
     }
 }
 
@@ -147,7 +268,7 @@ final class ConfiguredMathAnalyzer {
         )
     }
 
-    func passages(page: PageText, limit: Int = 20) async throws -> [ImportantPassage] {
+    func passages(page: PageText, limit: Int = MathAnalysisPrompt.maximumHighlightsPerPage) async throws -> [ImportantPassage] {
         if let rateLimitUntil {
             let remaining = rateLimitUntil.timeIntervalSinceNow
             guard remaining <= 0 else {
@@ -305,9 +426,10 @@ final class GeminiMathAnalyzer {
                             "kind": ["type": "string", "enum": ["definition", "theorem", "lemma", "corollary", "equation", "notation", "concept"]],
                             "explanation": ["type": "string"],
                             "importance": ["type": "integer"],
-                            "concepts": ["type": "array", "items": ["type": "string"]]
+                            "concepts": ["type": "array", "items": ["type": "string"]],
+                            "display_formula": ["type": "string"]
                         ],
-                        "required": ["page_index", "exact_text", "kind", "explanation", "importance", "concepts"]
+                        "required": ["page_index", "exact_text", "kind", "explanation", "importance", "concepts", "display_formula"]
                     ]
                 ]
             ],
