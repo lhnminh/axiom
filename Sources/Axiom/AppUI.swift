@@ -61,6 +61,24 @@ enum FormulaDisplayFormatter {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The raw PDF span is still the authority for notation. An AI display can improve
+    /// layout, but it must not silently lose a hat, bar, or other modifying mark.
+    static func preferredDisplay(aiDisplay: String?, source: String) -> String {
+        let sourceDisplay = display(source)
+        guard let aiDisplay = aiDisplay?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !aiDisplay.isEmpty else { return sourceDisplay }
+        let cleanedAI = withoutReferenceNumber(aiDisplay)
+        return notationMarkCount(in: cleanedAI) < notationMarkCount(in: sourceDisplay)
+            ? sourceDisplay
+            : cleanedAI
+    }
+
+    private static func notationMarkCount(in formula: String) -> Int {
+        formula.unicodeScalars.reduce(into: 0) { count, scalar in
+            if scalar.value == 0x0302 || scalar.value == 0x0304 || scalar.value == 0x005E { count += 1 }
+        }
+    }
+
     /// PDF text extraction occasionally interleaves the end of the first visual row with
     /// the start of the next one. This repairs the common two-row layout without changing
     /// the meaning of ordinary one-line equations.
@@ -112,15 +130,88 @@ enum FormulaDisplayFormatter {
     static func symbolNotes(for formula: String) -> [String] {
         var notes: [String] = []
         if formula.contains("Y") { notes.append("Y — observed outcome") }
-        if formula.contains("f") { notes.append("f̂(X) — estimated prediction from inputs X") }
+        if formula.contains("f̂") { notes.append("f̂(X) — estimated prediction from inputs X") }
         if formula.contains("ϵ") || formula.contains("ε") { notes.append("ε — irreducible error") }
         if formula.contains("Var") { notes.append("Var(ε) — variance of the irreducible error") }
-        return notes
+        if formula.contains("E(") { notes.append("E(·) — the average value") }
+        return notes + FormulaNotation.notes(in: formula, excluding: notes)
     }
 
     static func pseudocode(for formula: String) -> String? {
         guard formula.contains("Var"), formula.contains("=") else { return nil }
         return "prediction = f̂(X)\nerror = Y − prediction\nexpected_error = reducible_error + Var(error)"
+    }
+}
+
+enum FormulaNotation {
+    private static let entries: [(symbols: [String], meaning: String)] = [
+        (["Σ", "∑"], "Σ / ∑ — sum: add all indicated values together"),
+        (["Π", "∏"], "Π / ∏ — product: multiply all indicated values together"),
+        (["∫"], "∫ — integral: add infinitely many tiny pieces across a range"),
+        (["∂"], "∂ — partial derivative: how a result changes when one input changes"),
+        (["∇"], "∇ — gradient: the direction of fastest increase"),
+        (["∞"], "∞ — infinity: continues without end"),
+        (["√"], "√ — square root: the number that multiplies by itself to give the value"),
+        (["±"], "± — plus or minus: use either the positive or negative version"),
+        (["≈"], "≈ — approximately equal to"),
+        (["≠"], "≠ — not equal to"),
+        (["≤"], "≤ — less than or equal to"),
+        (["≥"], "≥ — greater than or equal to"),
+        (["∈"], "∈ — belongs to / is an element of a set"),
+        (["∉"], "∉ — does not belong to a set"),
+        (["⊂", "⊆"], "⊂ / ⊆ — subset: one set is contained in another"),
+        (["∪"], "∪ — union: everything in either set"),
+        (["∩"], "∩ — intersection: items shared by both sets"),
+        (["∀"], "∀ — for every"),
+        (["∃"], "∃ — there exists"),
+        (["⇒", "→"], "⇒ / → — leads to, maps to, or implies"),
+        (["⇔", "↔"], "⇔ / ↔ — if and only if"),
+        (["‖"], "‖ ‖ — norm: the size or length of a vector"),
+        (["lim"], "lim — limit: the value approached"),
+        (["log"], "log — logarithm: the exponent needed to make a number"),
+        (["ln"], "ln — natural logarithm"),
+        (["exp"], "exp — exponential function"),
+        (["α", "β", "γ", "δ", "θ", "λ", "μ", "σ", "π", "ρ", "τ", "φ", "ω"], "Greek letter — a variable or parameter; its precise meaning comes from the surrounding text")
+    ]
+
+    static func notes(in formula: String, excluding existing: [String] = []) -> [String] {
+        entries.compactMap { entry in
+            guard entry.symbols.contains(where: formula.contains),
+                  !existing.contains(entry.meaning) else { return nil }
+            return entry.meaning
+        }.prefix(12).map { $0 }
+    }
+}
+
+enum FormulaLearningSupport {
+    static func explanation(aiExplanation: String, formula: String) -> String {
+        let trimmed = aiExplanation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty || trimmed.lowercased().hasPrefix("central displayed equation") else {
+            return trimmed
+        }
+        if formula.contains("Var"), formula.contains("E("), formula.contains("Y") {
+            return "This formula measures how far predictions are from the real outcome on average. It splits that total prediction error into a part that can be improved by making a better model and a part caused by unavoidable randomness."
+        }
+        if formula.contains("Σ") || formula.contains("∑") {
+            return "This formula combines many values into one result. The Σ symbol means to calculate each indicated term and add all of them together."
+        }
+        if formula.contains("∫") {
+            return "This formula adds up many tiny pieces continuously to find a total, such as an area, distance, or accumulated change."
+        }
+        return "This formula is a rule for turning the values on the right into the result on the left. Work through the operations in order, then interpret the final result in the context of the page."
+    }
+
+    static func steps(for formula: String) -> String {
+        if formula.contains("Var"), formula.contains("E("), formula.contains("Y") {
+            return "1. Find the prediction f̂(X).\n2. Compare it with the real outcome Y.\n3. Square that difference so larger mistakes count more.\n4. Average the squared mistakes, then separate the improvable and unavoidable parts."
+        }
+        if formula.contains("Σ") || formula.contains("∑") {
+            return "1. Start at the lower number beneath Σ.\n2. Calculate the expression for each value up to the upper number.\n3. Add those results together."
+        }
+        if formula.contains("∫") {
+            return "1. Identify the range shown below and above ∫.\n2. Treat the expression as tiny pieces across that range.\n3. Add all the pieces to get the total."
+        }
+        return "1. Identify the input values.\n2. Calculate the right-hand side from left to right.\n3. Use the resulting value as the quantity on the left."
     }
 }
 
@@ -1559,17 +1650,16 @@ final class ReaderViewController: NSViewController {
         let content = NSMutableAttributedString()
         if passage.kind == "equation" {
             let formula = passage.formulaDisplay?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let displayedFormula = (formula?.isEmpty == false)
-                ? FormulaDisplayFormatter.withoutReferenceNumber(formula!)
-                : FormulaDisplayFormatter.display(passage.sentence)
+            let displayedFormula = FormulaDisplayFormatter.preferredDisplay(
+                aiDisplay: formula,
+                source: passage.sentence
+            )
             content.append(NSAttributedString(string: "Formula\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
             content.append(NSAttributedString(string: displayedFormula + "\n\n", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 15, weight: .medium), .foregroundColor: NSColor.labelColor]))
-            appendInspectorSection("What it means", passage.explanation, to: content)
+            appendInspectorSection("What it means", FormulaLearningSupport.explanation(aiExplanation: passage.explanation, formula: displayedFormula), to: content)
             let symbols = FormulaDisplayFormatter.symbolNotes(for: displayedFormula)
             if !symbols.isEmpty { appendInspectorSection("Symbols", symbols.joined(separator: "\n"), to: content) }
-            if let pseudocode = FormulaDisplayFormatter.pseudocode(for: displayedFormula) {
-                appendInspectorSection("How to read it", pseudocode, to: content, monospaced: true)
-            }
+            appendInspectorSection("How to use it", FormulaLearningSupport.steps(for: displayedFormula), to: content)
         } else {
             content.append(NSAttributedString(string: "Why this matters\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
             content.append(NSAttributedString(string: passage.sentence + "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold)]))

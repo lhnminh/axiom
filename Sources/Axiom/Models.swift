@@ -175,7 +175,7 @@ struct StoredHighlight: Sendable {
 }
 
 struct AnalysisIdentity: Sendable {
-    static let promptVersion = "page-highlights-v8"
+    static let promptVersion = "page-highlights-v10"
 
     let provider: String
     let model: String

@@ -85,6 +85,18 @@ enum AxiomVerification {
             failures: &failures
         )
 
+        let missingHatAIFormula = "E(Y − Ŷ)² = E[f(X) + ε − f̂(X)]² = [f(X) − f(X)]² + Var(ε)"
+        let preferredFormula = FormulaDisplayFormatter.preferredDisplay(
+            aiDisplay: missingHatAIFormula,
+            source: interleavedPDFFormula
+        )
+        check(
+            preferredFormula.components(separatedBy: "f̂").count - 1 >= 2
+                && FormulaNotation.notes(in: "∑ αᵢ ≤ ∞").count >= 3,
+            "Lost notation marks fall back to PDF notation and advanced symbols are explained",
+            failures: &failures
+        )
+
         let malformedEquation = MathHighlightCandidate(
             page_index: 0,
             exact_text: "ˆ\nY )2 = E[f (X)]2\nˆ",
@@ -98,6 +110,16 @@ enum AxiomVerification {
         check(
             boundedFallback.first?.kind == "equation" && boundedFallback.first?.sentence.hasPrefix("E(Y−") == true,
             "Malformed equation spans fall back to the bounded displayed formula",
+            failures: &failures
+        )
+
+        check(
+            FormulaLearningSupport.explanation(
+                aiExplanation: "Central displayed equation detected from the page text.",
+                formula: "E(Y − f̂(X))² = Var(ε)"
+            ).contains("predictions")
+                && FormulaLearningSupport.steps(for: "Σᵢ₌₁ⁿ xᵢ").contains("Add those results together"),
+            "Formula fallback explains prediction error and sum notation in plain words",
             failures: &failures
         )
 
