@@ -427,7 +427,10 @@ final class PetOverlayView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
+        // While Codex is travelling, it is decorative. Let the PDF beneath it keep
+        // receiving hover events so its inspector does not clear when Codex passes over.
+        if isPerformingHighlightPass { return nil }
+        return bounds.contains(point) ? self : nil
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

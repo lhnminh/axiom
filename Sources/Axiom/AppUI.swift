@@ -11,7 +11,7 @@ final class HighlightAwarePDFView: PDFView {
         if let trackingAreaReference { removeTrackingArea(trackingAreaReference) }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -25,9 +25,25 @@ final class HighlightAwarePDFView: PDFView {
         super.mouseMoved(with: event)
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        onPointerMoved?(convert(event.locationInWindow, from: nil))
+        super.mouseEntered(with: event)
+    }
+
     override func mouseExited(with event: NSEvent) {
         onPointerMoved?(nil)
         super.mouseExited(with: event)
+    }
+
+    /// Tracking areas can be created before this view joins a key window on launch.
+    /// Reinstall them after attachment and inspect the current pointer without waiting
+    /// for a focus change or the next mouse movement.
+    func activateHoverTracking() {
+        window?.acceptsMouseMovedEvents = true
+        updateTrackingAreas()
+        guard let window else { return }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        onPointerMoved?(bounds.contains(point) ? point : nil)
     }
 }
 
@@ -1036,6 +1052,7 @@ final class ReaderViewController: NSViewController {
     private var revealedHighlightKeys: [Int: Set<String>] = [:]
     private var annotationPassages: [ObjectIdentifier: ImportantPassage] = [:]
     private var hoveredAnnotationID: ObjectIdentifier?
+    private var hoverClearTask: Task<Void, Never>?
 
     init(textbook: TextbookSummary, store: TextbookStore, analyzer: ConfiguredMathAnalyzer, onBack: @escaping () -> Void) {
         self.textbook = textbook
@@ -1048,6 +1065,7 @@ final class ReaderViewController: NSViewController {
     required init?(coder: NSCoder) { nil }
 
     deinit {
+        hoverClearTask?.cancel()
         securityScopedURL?.stopAccessingSecurityScopedResource()
         NotificationCenter.default.removeObserver(self)
     }
@@ -1137,6 +1155,16 @@ final class ReaderViewController: NSViewController {
             size: PetOverlayView.defaultSize,
             normalizedPosition: petPosition
         )
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        pdfView.activateHoverTracking()
+        // AppKit may attach the PDF view one layout pass after viewDidAppear during
+        // initial launch. Repeat on the next run-loop turn to cover that timing.
+        DispatchQueue.main.async { [weak self] in
+            self?.pdfView.activateHoverTracking()
+        }
     }
 
     private var petMovementBounds: NSRect {
@@ -1659,6 +1687,7 @@ final class ReaderViewController: NSViewController {
     }
 
     private func removeAutoHighlights(from page: PDFPage) {
+        hoverClearTask?.cancel()
         for annotation in page.annotations where annotation.userName == "AxiomAutoHighlight" {
             annotationPassages.removeValue(forKey: ObjectIdentifier(annotation))
             page.removeAnnotation(annotation)
@@ -1668,16 +1697,26 @@ final class ReaderViewController: NSViewController {
 
     private func updateInspectorHover(at point: NSPoint?) {
         guard let point, let annotation = annotation(at: point) else {
-            if hoveredAnnotationID != nil {
-                hoveredAnnotationID = nil
-                showEmptyInspector()
-            }
+            scheduleInspectorClear()
             return
         }
+        hoverClearTask?.cancel()
         let id = ObjectIdentifier(annotation)
         guard id != hoveredAnnotationID, let passage = annotationPassages[id] else { return }
         hoveredAnnotationID = id
         showInspector(for: passage)
+    }
+
+    private func scheduleInspectorClear() {
+        guard let hoveredAnnotationID else { return }
+        hoverClearTask?.cancel()
+        hoverClearTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(140))
+            guard !Task.isCancelled, let self,
+                  self.hoveredAnnotationID == hoveredAnnotationID else { return }
+            self.hoveredAnnotationID = nil
+            self.showEmptyInspector()
+        }
     }
 
     private func annotation(at point: NSPoint) -> PDFAnnotation? {
@@ -1693,6 +1732,14 @@ final class ReaderViewController: NSViewController {
     }
 
     private func showEmptyInspector() {
+        // Animation, cache, and layout updates may ask for the resting sidebar while the
+        // reader is still hovering a highlight. Preserve that active inspector instead of
+        // making the explanation blink away beneath a stationary pointer.
+        if let hoveredAnnotationID, let passage = annotationPassages[hoveredAnnotationID] {
+            hoverClearTask?.cancel()
+            showInspector(for: passage)
+            return
+        }
         let content = NSMutableAttributedString()
         content.append(NSAttributedString(string: "Highlight details\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
         content.append(NSAttributedString(string: "\nHover over a highlight to see why it matters.\n", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]))
