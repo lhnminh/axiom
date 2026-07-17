@@ -1717,7 +1717,12 @@ final class ReaderViewController: NSViewController {
             content.append(NSAttributedString(string: "Why this matters\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
             content.append(NSAttributedString(string: passage.sentence + "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold)]))
             appendInspectorSection("Why", passage.explanation, to: content)
-            appendInspectorSection("In simple terms", "This is a key idea for understanding the section.", to: content)
+            let simpleExplanation = passage.simpleExplanation?.trimmingCharacters(in: .whitespacesAndNewlines)
+            appendInspectorSection(
+                "In simple terms",
+                (simpleExplanation?.isEmpty == false) ? simpleExplanation! : passage.explanation,
+                to: content
+            )
             if !passage.concepts.isEmpty {
                 appendInspectorSection("Connection", "Related: " + passage.concepts.joined(separator: ", ") + ".", to: content)
             }

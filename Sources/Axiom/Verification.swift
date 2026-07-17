@@ -19,6 +19,7 @@ enum AxiomVerification {
                 exact_text: "Var(X) = E[(X - E[X])²].",
                 kind: "equation",
                 explanation: "Defines variance.",
+                simple_explanation: "It tells you how spread out values are around their average.",
                 importance: 9,
                 concepts: ["variance"],
                 display_formula: "Var(X) = E[(X − E[X])²]"
@@ -26,8 +27,10 @@ enum AxiomVerification {
         ]
         check(
             MathAnalysisPrompt.mapHighlights(equationCandidates, onto: equationPage).first?.formulaDisplay
-                == "Var(X) = E[(X − E[X])²]",
-            "Equation matching and clean AI formula display survive PDF line breaks",
+                == "Var(X) = E[(X − E[X])²]"
+                && MathAnalysisPrompt.mapHighlights(equationCandidates, onto: equationPage).first?.simpleExplanation
+                    == "It tells you how spread out values are around their average.",
+            "Equation matching, clean display, and simple explanation survive PDF line breaks",
             failures: &failures
         )
 
@@ -186,6 +189,7 @@ enum AxiomVerification {
             range: NSRange(location: 12, length: 14),
             kind: "concept",
             explanation: "A model-fit measure.",
+            simpleExplanation: "It shows how closely a model matches the examples it already saw.",
             score: 7,
             concepts: ["training error"],
             formulaDisplay: "E = observed − predicted"
@@ -198,7 +202,8 @@ enum AxiomVerification {
             identity: identity
         ), highlights.count == 1,
               highlights[0].concepts == ["training error"],
-              highlights[0].passage.formulaDisplay == "E = observed − predicted" else {
+              highlights[0].passage.formulaDisplay == "E = observed − predicted",
+              highlights[0].passage.simpleExplanation == "It shows how closely a model matches the examples it already saw." else {
             throw VerificationError.failed("Stored highlights were not returned from cache.")
         }
         let changed = AnalysisIdentity(provider: "Gemini", model: "changed-model", promptVersion: "verify-v1")

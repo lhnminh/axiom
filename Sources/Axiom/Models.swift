@@ -7,6 +7,7 @@ struct ImportantPassage: Sendable {
     let range: NSRange
     let kind: String
     let explanation: String
+    let simpleExplanation: String?
     let score: Int
     let concepts: [String]
     /// A readable, AI-reconstructed formula. The PDF text remains the source used to locate it.
@@ -18,6 +19,7 @@ struct ImportantPassage: Sendable {
         range: NSRange,
         kind: String,
         explanation: String,
+        simpleExplanation: String? = nil,
         score: Int,
         concepts: [String],
         formulaDisplay: String? = nil
@@ -27,6 +29,7 @@ struct ImportantPassage: Sendable {
         self.range = range
         self.kind = kind
         self.explanation = explanation
+        self.simpleExplanation = simpleExplanation
         self.score = score
         self.concepts = concepts
         self.formulaDisplay = formulaDisplay
@@ -43,6 +46,7 @@ struct MathHighlightCandidate: Codable, Sendable {
     let exact_text: String
     let kind: String
     let explanation: String
+    let simple_explanation: String?
     let importance: Int
     let concepts: [String]?
     let display_formula: String?
@@ -52,6 +56,7 @@ struct MathHighlightCandidate: Codable, Sendable {
         exact_text: String,
         kind: String,
         explanation: String,
+        simple_explanation: String? = nil,
         importance: Int,
         concepts: [String]?,
         display_formula: String? = nil
@@ -60,6 +65,7 @@ struct MathHighlightCandidate: Codable, Sendable {
         self.exact_text = exact_text
         self.kind = kind
         self.explanation = explanation
+        self.simple_explanation = simple_explanation
         self.importance = importance
         self.concepts = concepts
         self.display_formula = display_formula
@@ -76,6 +82,7 @@ struct CachedAnalysisPassage: Codable, Sendable {
     let length: Int
     let kind: String
     let explanation: String
+    let simpleExplanation: String?
     let importance: Int
     let concepts: [String]
     let formulaDisplay: String?
@@ -86,6 +93,7 @@ struct CachedAnalysisPassage: Codable, Sendable {
         length = passage.range.length
         kind = passage.kind
         explanation = passage.explanation
+        simpleExplanation = passage.simpleExplanation
         importance = passage.score
         concepts = passage.concepts
         formulaDisplay = passage.formulaDisplay
@@ -98,6 +106,7 @@ struct CachedAnalysisPassage: Codable, Sendable {
             range: NSRange(location: location, length: length),
             kind: kind,
             explanation: explanation,
+            simpleExplanation: simpleExplanation,
             score: importance,
             concepts: concepts,
             formulaDisplay: formulaDisplay
@@ -134,6 +143,7 @@ struct StoredHighlight: Sendable {
     let length: Int
     let kind: String
     let explanation: String
+    let simpleExplanation: String?
     let importance: Int
     let concepts: [String]
     let formulaDisplay: String?
@@ -145,6 +155,7 @@ struct StoredHighlight: Sendable {
         length: Int,
         kind: String,
         explanation: String,
+        simpleExplanation: String? = nil,
         importance: Int,
         concepts: [String],
         formulaDisplay: String? = nil
@@ -155,6 +166,7 @@ struct StoredHighlight: Sendable {
         self.length = length
         self.kind = kind
         self.explanation = explanation
+        self.simpleExplanation = simpleExplanation
         self.importance = importance
         self.concepts = concepts
         self.formulaDisplay = formulaDisplay
@@ -167,6 +179,7 @@ struct StoredHighlight: Sendable {
             range: NSRange(location: location, length: length),
             kind: kind,
             explanation: explanation,
+            simpleExplanation: simpleExplanation,
             score: importance,
             concepts: concepts,
             formulaDisplay: formulaDisplay
@@ -175,7 +188,7 @@ struct StoredHighlight: Sendable {
 }
 
 struct AnalysisIdentity: Sendable {
-    static let promptVersion = "page-highlights-v10"
+    static let promptVersion = "page-highlights-v11"
 
     let provider: String
     let model: String

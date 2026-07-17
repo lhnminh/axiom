@@ -13,6 +13,7 @@ enum MathAnalysisPrompt {
     For every equation, also return display_formula: a clean, self-contained, human-readable Unicode display of that exact formula. Restore its visual reading order, line breaks, superscripts, subscripts, fractions, Greek letters, and aligned equals signs. Do not include prose labels such as "Reducible". This field is for display only, so it may correct PDF extraction order; exact_text must still be copied exactly from PAGE_TEXT. For non-equations, return an empty display_formula.
     Preserve every decorated symbol exactly in display_formula: for example, f̂(X) is not the same as f(X), and repeated appearances of f̂ must never be changed into f. Use a combining hat (f̂), not a detached caret (^), for an estimated symbol.
     For an equation, explanation MUST be 2 to 4 short, student-friendly sentences. Explain what the formula calculates, what each side is doing, and how a student would use it. Translate advanced notation into plain words: Σ/∑ means "add all the indicated values", ∫ means "add tiny pieces continuously", E(·) means "the average", and a superscript 2 means "square it". Never say only that an equation was detected, and avoid unexplained technical jargon.
+    For EVERY highlight, return simple_explanation: one specific, plain-English sentence that teaches this exact highlighted idea to a beginner. It must not be generic, must not say "key idea", and must not merely repeat exact_text or explanation.
     Do not highlight routine prose, examples, figure captions, transitions, repeated terminology, or every related concept. Never return both a formula and one of its subexpressions, or overlapping parts of the same statement.
     exact_text is used to locate text in the PDF. It MUST be copied character-for-character from PAGE_TEXT, including mathematical symbols, punctuation, and spacing. Never rewrite a formula as LaTeX, prose, or an equivalent expression. For a formula, return the shortest distinctive exact fragment available in PAGE_TEXT; include a nearby label or sentence only when the formula alone is not distinctive.
     Keep each span focused and non-overlapping. Prefer a complete equation or a complete named statement over a vague surrounding paragraph.
@@ -48,6 +49,7 @@ enum MathAnalysisPrompt {
                 range: range,
                 kind: highlight.kind,
                 explanation: highlight.explanation,
+                simpleExplanation: cleanSimpleExplanation(highlight.simple_explanation),
                 score: min(max(highlight.importance, 1), 10),
                 concepts: highlight.concepts ?? [],
                 formulaDisplay: cleanFormulaDisplay(highlight.display_formula, kind: highlight.kind)
@@ -100,6 +102,13 @@ enum MathAnalysisPrompt {
               let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty,
               value.count <= 1_200 else { return nil }
+        return value
+    }
+
+    private static func cleanSimpleExplanation(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty,
+              value.count <= 500 else { return nil }
         return value
     }
 
@@ -425,11 +434,12 @@ final class GeminiMathAnalyzer {
                             "exact_text": ["type": "string"],
                             "kind": ["type": "string", "enum": ["definition", "theorem", "lemma", "corollary", "equation", "notation", "concept"]],
                             "explanation": ["type": "string"],
+                            "simple_explanation": ["type": "string"],
                             "importance": ["type": "integer"],
                             "concepts": ["type": "array", "items": ["type": "string"]],
                             "display_formula": ["type": "string"]
                         ],
-                        "required": ["page_index", "exact_text", "kind", "explanation", "importance", "concepts", "display_formula"]
+                        "required": ["page_index", "exact_text", "kind", "explanation", "simple_explanation", "importance", "concepts", "display_formula"]
                     ]
                 ]
             ],

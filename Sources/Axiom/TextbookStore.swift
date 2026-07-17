@@ -305,8 +305,8 @@ actor TextbookStore {
             for passage in passages {
                 let insert = try prepare("""
                 INSERT INTO highlights(textbook_id, page_index, exact_text, range_location, range_length,
-                    kind, explanation, importance, concepts_json, formula_display)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                    kind, explanation, simple_explanation, importance, concepts_json, formula_display)
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """)
                 sqlite3_bind_int64(insert, 1, textbookID)
                 sqlite3_bind_int(insert, 2, Int32(pageIndex))
@@ -315,9 +315,10 @@ actor TextbookStore {
                 sqlite3_bind_int(insert, 5, Int32(passage.range.length))
                 bind(passage.kind, at: 6, in: insert)
                 bind(passage.explanation, at: 7, in: insert)
-                sqlite3_bind_int(insert, 8, Int32(passage.score))
-                bind(Self.encodeConcepts(passage.concepts), at: 9, in: insert)
-                bind(passage.formulaDisplay, at: 10, in: insert)
+                bind(passage.simpleExplanation, at: 8, in: insert)
+                sqlite3_bind_int(insert, 9, Int32(passage.score))
+                bind(Self.encodeConcepts(passage.concepts), at: 10, in: insert)
+                bind(passage.formulaDisplay, at: 11, in: insert)
                 try stepDone(insert)
                 let highlightID = sqlite3_last_insert_rowid(database)
                 sqlite3_finalize(insert)
@@ -435,7 +436,7 @@ actor TextbookStore {
 
     private func highlights(textbookID: Int64, pageIndex: Int) throws -> [StoredHighlight] {
         let statement = try prepare("""
-        SELECT exact_text, range_location, range_length, kind, explanation, importance, concepts_json, formula_display
+        SELECT exact_text, range_location, range_length, kind, explanation, simple_explanation, importance, concepts_json, formula_display
         FROM highlights WHERE textbook_id = ? AND page_index = ? ORDER BY id;
         """)
         defer { sqlite3_finalize(statement) }
@@ -450,9 +451,10 @@ actor TextbookStore {
                 length: Int(sqlite3_column_int(statement, 2)),
                 kind: string(statement, column: 3),
                 explanation: string(statement, column: 4),
-                importance: Int(sqlite3_column_int(statement, 5)),
-                concepts: Self.decodeConcepts(string(statement, column: 6)),
-                formulaDisplay: optionalString(statement, column: 7)
+                simpleExplanation: optionalString(statement, column: 5),
+                importance: Int(sqlite3_column_int(statement, 6)),
+                concepts: Self.decodeConcepts(string(statement, column: 7)),
+                formulaDisplay: optionalString(statement, column: 8)
             ))
         }
         return results
@@ -545,6 +547,7 @@ actor TextbookStore {
             range_length INTEGER NOT NULL,
             kind TEXT NOT NULL,
             explanation TEXT NOT NULL,
+            simple_explanation TEXT,
             importance INTEGER NOT NULL,
             concepts_json TEXT NOT NULL DEFAULT '[]',
             formula_display TEXT
@@ -584,6 +587,7 @@ actor TextbookStore {
         );
         """, database: database)
         try addColumnIfMissing("formula_display", to: "highlights", definition: "TEXT", database: database)
+        try addColumnIfMissing("simple_explanation", to: "highlights", definition: "TEXT", database: database)
     }
 
     private static func addColumnIfMissing(
