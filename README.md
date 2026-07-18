@@ -74,6 +74,11 @@ Axiom stores textbook, page, highlight, concept, and analysis-job metadata in:
 
 The original PDFs remain in their existing filesystem locations.
 
+## System design
+
+See [docs/system-design.md](docs/system-design.md) for the code-backed architecture, data model,
+runtime flows, cache rules, concurrency model, failure handling, and system diagrams.
+
 ## Verification
 
 Run the non-GUI fixture and cache checks with:
