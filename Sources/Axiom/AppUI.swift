@@ -253,6 +253,7 @@ enum TextbookURLResolver {
     }
 }
 
+@MainActor
 enum AxiomBrand {
     static let logo = image(named: "Axiom_logo_transparent")
     static let appIcon = image(named: "Axiom_app_icon")
@@ -265,11 +266,13 @@ enum AxiomBrand {
 
 private enum LibraryPalette {
     static let canvas = NSColor(calibratedRed: 0.095, green: 0.098, blue: 0.106, alpha: 1)
+    static let sidebar = NSColor(calibratedRed: 0.112, green: 0.116, blue: 0.125, alpha: 1)
     static let raised = NSColor(calibratedRed: 0.135, green: 0.139, blue: 0.149, alpha: 1)
     static let border = NSColor(calibratedWhite: 1, alpha: 0.12)
     static let control = NSColor(calibratedWhite: 1, alpha: 0.07)
     static let primaryText = NSColor(calibratedWhite: 0.94, alpha: 1)
     static let secondaryText = NSColor(calibratedWhite: 0.66, alpha: 1)
+    static let accent = NSColor(calibratedRed: 0.95, green: 0.76, blue: 0.22, alpha: 1)
 }
 
 private enum ReaderPalette {
@@ -283,6 +286,34 @@ private enum ReaderPalette {
     static let icon = NSColor.white
     static let primaryText = LibraryPalette.primaryText
     static let secondaryText = LibraryPalette.secondaryText
+}
+
+enum AxiomDisplayName {
+    static func textbook(_ rawName: String) -> String {
+        let cleaned = rawName
+            .replacingOccurrences(of: #"[_-]+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "Untitled textbook" }
+
+        return cleaned
+            .split(separator: " ")
+            .map { word in
+                let value = String(word)
+                guard value.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil else {
+                    return value
+                }
+                if value == value.uppercased(), value.count <= 6 {
+                    return value
+                }
+                return value.prefix(1).uppercased() + value.dropFirst()
+            }
+            .joined(separator: " ")
+    }
+
+    static func pageCount(_ count: Int) -> String {
+        "\(count) \(count == 1 ? "page" : "pages")"
+    }
 }
 
 private final class FlippedInspectorDocumentView: NSView {
@@ -433,11 +464,18 @@ private final class ReaderInspectorView: NSView {
 
     func showEmpty() {
         let instructionCard = ReaderInspectorCardView(
-            body: "Hover over a highlight to see why it matters."
+            body: "Hover over a yellow highlight to see why it matters, a simpler explanation, and the ideas it connects to."
         )
         replaceContent(with: [
             makeHeader(title: "Highlight details", badge: nil, symbolName: "highlighter"),
             instructionCard
+        ])
+    }
+
+    func showStatus(title: String, note: String, badge: String?, symbolName: String) {
+        replaceContent(with: [
+            makeHeader(title: title, badge: badge, symbolName: symbolName),
+            ReaderInspectorCardView(body: note, accentColor: ReaderPalette.inspectorAccent)
         ])
     }
 
@@ -619,7 +657,7 @@ final class TextbookCardItem: NSCollectionViewItem {
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let progress = NSProgressIndicator()
-    private let continueButton = NSButton(title: "Continue", target: nil, action: nil)
+    private let continueButton = NSButton(title: "Open", target: nil, action: nil)
     private let moreButton = NSButton()
     private var textbook: TextbookSummary?
     var onOpen: ((TextbookSummary) -> Void)?
@@ -719,7 +757,9 @@ final class TextbookCardItem: NSCollectionViewItem {
 
     func configure(textbook: TextbookSummary) {
         self.textbook = textbook
-        titleLabel.stringValue = textbook.displayName
+        let displayName = AxiomDisplayName.textbook(textbook.displayName)
+        titleLabel.stringValue = displayName
+        titleLabel.toolTip = displayName
         cover.image = TextbookCoverCache.image(for: textbook)
         cover.imageScaling = cover.image == nil ? .scaleNone : .scaleProportionallyUpOrDown
         if cover.image == nil {
@@ -729,7 +769,7 @@ final class TextbookCardItem: NSCollectionViewItem {
 
         switch textbook.extractionStatus {
         case "ready":
-            detailLabel.stringValue = "\(textbook.pageCount) pages"
+            detailLabel.stringValue = AxiomDisplayName.pageCount(textbook.pageCount)
             progress.isHidden = true
         case "failed":
             detailLabel.stringValue = "Metadata needs attention"
@@ -741,7 +781,10 @@ final class TextbookCardItem: NSCollectionViewItem {
                 ? Double(textbook.extractedPages) / Double(textbook.pageCount)
                 : 0
         }
-        continueButton.title = TextbookURLResolver.resolve(textbook) == nil ? "Locate PDF" : "Continue"
+        let isAvailable = TextbookURLResolver.resolve(textbook) != nil
+        continueButton.title = isAvailable ? "Open" : "Locate PDF"
+        continueButton.toolTip = isAvailable ? "Open \(displayName)" : "Find the original PDF"
+        continueButton.setAccessibilityLabel(continueButton.toolTip ?? continueButton.title)
     }
 
     @objc private func openTextbook() {
@@ -792,7 +835,11 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
     private let collectionLayout = NSCollectionViewFlowLayout()
     private let searchField = NSTextField()
     private let recentLabel = NSTextField(labelWithString: "Recent")
-    private let emptyLabel = NSTextField(labelWithString: "")
+    private let emptyState = NSView()
+    private let emptyIcon = NSImageView()
+    private let emptyTitle = NSTextField(labelWithString: "")
+    private let emptyBody = NSTextField(wrappingLabelWithString: "")
+    private let emptyAction = NSButton(title: "", target: nil, action: nil)
     private var textbooks: [TextbookSummary] = []
     private var filteredTextbooks: [TextbookSummary] = []
     private var refreshTask: Task<Void, Never>?
@@ -903,10 +950,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         scroll.contentView.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        emptyLabel.font = .systemFont(ofSize: 14)
-        emptyLabel.textColor = LibraryPalette.secondaryText
-        emptyLabel.alignment = .center
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        configureEmptyState()
 
         let privacyIcon = NSImageView(image: NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil) ?? NSImage())
         privacyIcon.contentTintColor = LibraryPalette.secondaryText
@@ -926,7 +970,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         content.addSubview(searchSurface)
         content.addSubview(recentLabel)
         content.addSubview(scroll)
-        content.addSubview(emptyLabel)
+        content.addSubview(emptyState)
         content.addSubview(privacy)
         root.addSubview(sidebar)
         root.addSubview(divider)
@@ -974,8 +1018,9 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             scroll.leadingAnchor.constraint(equalTo: recentLabel.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -64),
             scroll.bottomAnchor.constraint(equalTo: privacy.topAnchor, constant: -10),
-            emptyLabel.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+            emptyState.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            emptyState.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+            emptyState.widthAnchor.constraint(lessThanOrEqualTo: scroll.widthAnchor, constant: -48),
             privacy.centerXAnchor.constraint(equalTo: content.centerXAnchor),
             privacy.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
             privacyIcon.widthAnchor.constraint(equalToConstant: 13),
@@ -983,6 +1028,49 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         ])
         suppressFocusRings(in: root)
         view = root
+    }
+
+    private func configureEmptyState() {
+        emptyState.wantsLayer = true
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 28, weight: .regular)
+        emptyIcon.contentTintColor = LibraryPalette.accent
+        emptyIcon.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyTitle.font = .systemFont(ofSize: 18, weight: .semibold)
+        emptyTitle.textColor = LibraryPalette.primaryText
+        emptyTitle.alignment = .center
+        emptyTitle.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyBody.font = .systemFont(ofSize: 13)
+        emptyBody.textColor = LibraryPalette.secondaryText
+        emptyBody.alignment = .center
+        emptyBody.maximumNumberOfLines = 0
+        emptyBody.translatesAutoresizingMaskIntoConstraints = false
+
+        emptyAction.bezelStyle = .rounded
+        emptyAction.font = .systemFont(ofSize: 13, weight: .medium)
+        emptyAction.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [emptyIcon, emptyTitle, emptyBody, emptyAction])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 12
+        stack.setCustomSpacing(18, after: emptyBody)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        emptyState.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: emptyState.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: emptyState.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: emptyState.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: emptyState.bottomAnchor),
+            emptyIcon.widthAnchor.constraint(equalToConstant: 34),
+            emptyIcon.heightAnchor.constraint(equalToConstant: 34),
+            emptyBody.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            emptyAction.widthAnchor.constraint(greaterThanOrEqualToConstant: 136),
+            emptyAction.heightAnchor.constraint(equalToConstant: 34)
+        ])
     }
 
     override func viewDidAppear() {
@@ -1034,11 +1122,9 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
     func importFolder() { addFolder() }
 
     private func makeSidebar() -> NSView {
-        let sidebar = NSVisualEffectView()
-        sidebar.material = .sidebar
-        sidebar.blendingMode = .behindWindow
-        sidebar.state = .active
+        let sidebar = NSView()
         sidebar.wantsLayer = true
+        sidebar.layer?.backgroundColor = LibraryPalette.sidebar.cgColor
         sidebar.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: "Axiom")
@@ -1057,9 +1143,9 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         sidebarSearch.translatesAutoresizingMaskIntoConstraints = false
 
         let library = makeNavigationRow(title: "Library", symbol: "books.vertical", selected: true)
-        let classes = makeNavigationRow(title: "Classes", symbol: "person.3", badge: "Soon", action: #selector(showClassesSoon))
-        let studyPlan = makeNavigationRow(title: "Study Plan", symbol: "calendar", badge: "Soon", action: #selector(showStudyPlanSoon))
-        let settings = makeNavigationRow(title: "Settings", symbol: "gearshape", action: #selector(showSettingsSoon))
+        let classes = makeNavigationRow(title: "Classes", symbol: "person.3", badge: "Soon")
+        let studyPlan = makeNavigationRow(title: "Study Plan", symbol: "calendar", badge: "Soon")
+        let settings = makeNavigationRow(title: "Settings", symbol: "gearshape", badge: "Soon")
 
         sidebar.addSubview(title)
         sidebar.addSubview(sidebarSearch)
@@ -1099,6 +1185,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         action: Selector? = nil
     ) -> NSView {
         let row = NSView()
+        let isEnabled = selected || action != nil
         row.wantsLayer = true
         row.layer?.cornerRadius = 11
         row.layer?.backgroundColor = selected
@@ -1110,18 +1197,18 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage()
         )
         icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
-        icon.contentTintColor = LibraryPalette.primaryText
+        icon.contentTintColor = isEnabled ? LibraryPalette.primaryText : LibraryPalette.secondaryText
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 16, weight: .regular)
-        titleLabel.textColor = LibraryPalette.primaryText
+        titleLabel.textColor = isEnabled ? LibraryPalette.primaryText : LibraryPalette.secondaryText
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let button = NSButton(title: title, target: self, action: action)
         button.isBordered = false
         button.isTransparent = true
-        button.isEnabled = true
+        button.isEnabled = action != nil
         button.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(icon)
         row.addSubview(titleLabel)
@@ -1136,11 +1223,10 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
             titleLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor)
         ]
         if let badge {
-            let badgeLabel = NSButton(title: badge, target: nil, action: nil)
+            let badgeLabel = NSTextField(labelWithString: badge)
             badgeLabel.font = .systemFont(ofSize: 11, weight: .medium)
-            badgeLabel.contentTintColor = LibraryPalette.secondaryText
+            badgeLabel.textColor = LibraryPalette.secondaryText
             badgeLabel.alignment = .center
-            badgeLabel.isBordered = false
             badgeLabel.wantsLayer = true
             badgeLabel.layer?.backgroundColor = LibraryPalette.raised.cgColor
             badgeLabel.layer?.cornerRadius = 7
@@ -1220,7 +1306,7 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
     private func remove(_ textbook: TextbookSummary) {
         let alert = NSAlert()
         alert.messageText = "Remove from Library?"
-        alert.informativeText = "Axiom will forget \"\(textbook.displayName)\". The original PDF will not be deleted."
+        alert.informativeText = "Axiom will forget “\(AxiomDisplayName.textbook(textbook.displayName))”. The original PDF will not be deleted."
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1292,26 +1378,41 @@ final class LibraryViewController: NSViewController, NSCollectionViewDataSource,
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         filteredTextbooks = query.isEmpty
             ? textbooks
-            : textbooks.filter { $0.displayName.localizedCaseInsensitiveContains(query) }
+            : textbooks.filter {
+                $0.displayName.localizedCaseInsensitiveContains(query)
+                    || AxiomDisplayName.textbook($0.displayName).localizedCaseInsensitiveContains(query)
+            }
         collectionView.reloadData()
-        recentLabel.stringValue = query.isEmpty ? "Recent" : "Search Results"
-        if textbooks.isEmpty {
-            emptyLabel.stringValue = "Add a folder of PDFs to build your library."
-        } else if filteredTextbooks.isEmpty {
-            emptyLabel.stringValue = "No textbooks match \"\(query)\"."
+        if query.isEmpty {
+            recentLabel.stringValue = textbooks.isEmpty
+                ? "Library"
+                : "Library · \(textbooks.count) \(textbooks.count == 1 ? "book" : "books")"
+        } else {
+            recentLabel.stringValue = "\(filteredTextbooks.count) \(filteredTextbooks.count == 1 ? "result" : "results")"
         }
-        emptyLabel.isHidden = !filteredTextbooks.isEmpty
+
+        if textbooks.isEmpty {
+            emptyIcon.image = NSImage(systemSymbolName: "books.vertical", accessibilityDescription: nil)
+            emptyTitle.stringValue = "Build your library"
+            emptyBody.stringValue = "Add a folder and Axiom will discover its PDFs while keeping every original file in place."
+            emptyAction.title = "Add textbook folder"
+            emptyAction.target = self
+            emptyAction.action = #selector(addFolder)
+        } else if filteredTextbooks.isEmpty {
+            emptyIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+            emptyTitle.stringValue = "No matching textbooks"
+            emptyBody.stringValue = "Nothing matches “\(query)”. Try another title or clear the search."
+            emptyAction.title = "Clear search"
+            emptyAction.target = self
+            emptyAction.action = #selector(clearSearch)
+        }
+        emptyState.isHidden = !filteredTextbooks.isEmpty
     }
 
-    @objc private func showClassesSoon() { presentComingSoon("Classes") }
-    @objc private func showStudyPlanSoon() { presentComingSoon("Study Plan") }
-    @objc private func showSettingsSoon() { presentComingSoon("Settings") }
-
-    private func presentComingSoon(_ feature: String) {
-        let alert = NSAlert()
-        alert.messageText = "\(feature) is coming soon"
-        alert.informativeText = "This prototype starts with the textbook library. \(feature) will become part of the broader Axiom study workspace."
-        alert.runModal()
+    @objc private func clearSearch() {
+        searchField.stringValue = ""
+        applyFilter()
+        view.window?.makeFirstResponder(searchField)
     }
 
     private func presentError(_ message: String) {
@@ -1508,7 +1609,7 @@ final class ReaderViewController: NSViewController {
             backButton.bottomAnchor.constraint(equalTo: backSurface.bottomAnchor)
         ])
 
-        let bookTitle = NSTextField(labelWithString: textbook.displayName)
+        let bookTitle = NSTextField(labelWithString: AxiomDisplayName.textbook(textbook.displayName))
         bookTitle.font = .systemFont(ofSize: 15, weight: .medium)
         bookTitle.textColor = ReaderPalette.primaryText
         bookTitle.alignment = .center
@@ -2056,19 +2157,35 @@ final class ReaderViewController: NSViewController {
     }
 
     private func renderSidebar(status: String, passages: [ImportantPassage], note: String) {
-        // The normal sidebar is deliberately an empty hover inspector. In particular, do
-        // not reintroduce the old list after a cache hit, page settle, or pet animation.
-        // Errors remain visible because they tell the reader what action is needed.
-        guard ["Failed", "Rate limited", "OCR required", "Unavailable"].contains(status) else {
-            showEmptyInspector()
+        // The resting sidebar remains a hover inspector. Transient work, configuration
+        // pauses, and actionable failures get a concise state instead of looking blank.
+        if ["Failed", "Rate limited", "OCR required", "Unavailable"].contains(status) {
+            inspector.showError(
+                page: currentPageIndex + 1,
+                status: status,
+                note: note,
+                passages: passages
+            )
             return
         }
-        inspector.showError(
-            page: currentPageIndex + 1,
-            status: status,
-            note: note,
-            passages: passages
-        )
+        switch status {
+        case "Analyzing":
+            inspector.showStatus(
+                title: "Reading this page",
+                note: note,
+                badge: "AI active",
+                symbolName: "sparkles"
+            )
+        case "Not analyzed":
+            inspector.showStatus(
+                title: "AI highlights paused",
+                note: note,
+                badge: nil,
+                symbolName: "pause.circle"
+            )
+        default:
+            showEmptyInspector()
+        }
     }
 
     @objc private func retryPage() {
@@ -2201,7 +2318,7 @@ final class AppCoordinator {
         let reader = ReaderViewController(textbook: textbook, store: store, analyzer: analyzer) { [weak self] in
             self?.showLibrary()
         }
-        window.title = textbook.displayName
+        window.title = AxiomDisplayName.textbook(textbook.displayName)
         configureWindowForReader()
         contentHost.show(reader, animated: true, direction: .forward)
     }
@@ -2270,13 +2387,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileItem = NSMenuItem()
         menu.addItem(appItem)
         menu.addItem(fileItem)
+
         let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(
+            title: "About Axiom",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: ""
+        ))
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "Hide Axiom", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        let hideOthers = NSMenuItem(
+            title: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h"
+        )
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthers)
+        appMenu.addItem(NSMenuItem(
+            title: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: ""
+        ))
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit Axiom", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
+
         let fileMenu = NSMenu(title: "File")
-        let addFolderItem = NSMenuItem(title: "Add Textbook Folder...", action: #selector(addFolderFromMenu), keyEquivalent: "o")
+        let addFolderItem = NSMenuItem(title: "Add Textbook Folder…", action: #selector(addFolderFromMenu), keyEquivalent: "o")
         addFolderItem.target = self
         fileMenu.addItem(addFolderItem)
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(NSMenuItem(
+            title: "Close Window",
+            action: #selector(NSWindow.performClose(_:)),
+            keyEquivalent: "w"
+        ))
         fileItem.submenu = fileMenu
         NSApplication.shared.mainMenu = menu
     }

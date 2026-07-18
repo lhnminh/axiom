@@ -12,6 +12,14 @@ enum AxiomVerification {
             failures: &failures
         )
 
+        check(
+            AxiomDisplayName.textbook("ISLP_website-28_merged") == "ISLP Website 28 Merged"
+                && AxiomDisplayName.pageCount(1) == "1 page"
+                && AxiomDisplayName.pageCount(8) == "8 pages",
+            "Library titles and page counts are presentation-ready",
+            failures: &failures
+        )
+
         let equationPage = PageText(pageIndex: 0, text: "The variance is\nVar(X) = E[(X - E[X])²].")
         let equationCandidates = [
             MathHighlightCandidate(
