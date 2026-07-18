@@ -278,9 +278,310 @@ private enum ReaderPalette {
     static let toolbar = LibraryPalette.raised
     static let border = LibraryPalette.border
     static let control = LibraryPalette.control
+    static let inspectorCard = NSColor(calibratedWhite: 1, alpha: 0.035)
+    static let inspectorAccent = NSColor(calibratedRed: 0.95, green: 0.76, blue: 0.22, alpha: 1)
     static let icon = NSColor.white
     static let primaryText = LibraryPalette.primaryText
     static let secondaryText = LibraryPalette.secondaryText
+}
+
+private final class FlippedInspectorDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+@MainActor
+private final class ReaderInspectorCardView: NSView {
+    init(
+        title: String? = nil,
+        body: String,
+        bodyFont: NSFont = .systemFont(ofSize: 13),
+        accentColor: NSColor? = nil
+    ) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = ReaderPalette.inspectorCard.cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = ReaderPalette.border.cgColor
+        layer?.cornerRadius = 12
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let bodyLabel = makeLabel(
+            body,
+            font: bodyFont,
+            color: ReaderPalette.primaryText,
+            lineSpacing: 4
+        )
+        let content = NSStackView()
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 10
+        content.translatesAutoresizingMaskIntoConstraints = false
+        if let title {
+            content.addArrangedSubview(makeLabel(
+                title.uppercased(),
+                font: .systemFont(ofSize: 11, weight: .semibold),
+                color: ReaderPalette.secondaryText,
+                lineSpacing: 2
+            ))
+        }
+        content.addArrangedSubview(bodyLabel)
+        addSubview(content)
+
+        let leadingInset: CGFloat = accentColor == nil ? 16 : 20
+        NSLayoutConstraint.activate([
+            content.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: leadingInset),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            bodyLabel.widthAnchor.constraint(equalTo: content.widthAnchor)
+        ])
+
+        if let accentColor {
+            let accent = NSView()
+            accent.wantsLayer = true
+            accent.layer?.backgroundColor = accentColor.cgColor
+            accent.layer?.cornerRadius = 2
+            accent.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(accent)
+            NSLayoutConstraint.activate([
+                accent.leadingAnchor.constraint(equalTo: leadingAnchor),
+                accent.topAnchor.constraint(equalTo: topAnchor),
+                accent.bottomAnchor.constraint(equalTo: bottomAnchor),
+                accent.widthAnchor.constraint(equalToConstant: 4)
+            ])
+        }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    private func makeLabel(
+        _ text: String,
+        font: NSFont,
+        color: NSColor,
+        lineSpacing: CGFloat
+    ) -> NSTextField {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = lineSpacing
+        let label = NSTextField(labelWithAttributedString: NSAttributedString(
+            string: text,
+            attributes: [
+                .font: font,
+                .foregroundColor: color,
+                .paragraphStyle: paragraphStyle
+            ]
+        ))
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }
+}
+
+@MainActor
+private final class ReaderInspectorView: NSView {
+    private let scrollView = NSScrollView()
+    private let documentView = FlippedInspectorDocumentView()
+    private let contentStack = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = ReaderPalette.raised.cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = ReaderPalette.border.cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = ReaderPalette.raised
+        scrollView.borderType = .noBorder
+        scrollView.contentView.drawsBackground = true
+        scrollView.contentView.backgroundColor = ReaderPalette.raised
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 14
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(contentStack)
+        scrollView.documentView = documentView
+        addSubview(scrollView)
+
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            documentView.heightAnchor.constraint(greaterThanOrEqualTo: scrollView.contentView.heightAnchor),
+
+            contentStack.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 24),
+            contentStack.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -20),
+            contentStack.bottomAnchor.constraint(lessThanOrEqualTo: documentView.bottomAnchor, constant: -24)
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func showEmpty() {
+        let instructionCard = ReaderInspectorCardView(
+            body: "Hover over a highlight to see why it matters."
+        )
+        replaceContent(with: [
+            makeHeader(title: "Highlight details", badge: nil, symbolName: "highlighter"),
+            instructionCard
+        ])
+    }
+
+    func showEquation(
+        formula: String,
+        explanation: String,
+        symbols: [String],
+        steps: String
+    ) {
+        var views: [NSView] = [
+            makeHeader(title: "Formula", badge: "Equation", symbolName: "sparkles"),
+            ReaderInspectorCardView(
+                body: formula,
+                bodyFont: .monospacedSystemFont(ofSize: 15, weight: .medium),
+                accentColor: ReaderPalette.inspectorAccent
+            ),
+            ReaderInspectorCardView(title: "What it means", body: explanation)
+        ]
+        if !symbols.isEmpty {
+            views.append(ReaderInspectorCardView(title: "Symbols", body: symbols.joined(separator: "\n")))
+        }
+        views.append(ReaderInspectorCardView(title: "How to use it", body: steps))
+        replaceContent(with: views)
+    }
+
+    func showPassage(
+        sentence: String,
+        explanation: String,
+        simpleExplanation: String,
+        concepts: [String]
+    ) {
+        var views: [NSView] = [
+            makeHeader(title: "Why this matters", badge: "Highlight", symbolName: "highlighter"),
+            ReaderInspectorCardView(
+                body: sentence,
+                bodyFont: .systemFont(ofSize: 15, weight: .semibold),
+                accentColor: ReaderPalette.inspectorAccent
+            ),
+            ReaderInspectorCardView(title: "Why", body: explanation),
+            ReaderInspectorCardView(title: "In simple terms", body: simpleExplanation)
+        ]
+        if !concepts.isEmpty {
+            views.append(ReaderInspectorCardView(
+                title: "Connection",
+                body: "Related: " + concepts.joined(separator: ", ") + "."
+            ))
+        }
+        replaceContent(with: views)
+    }
+
+    func showError(page: Int, status: String, note: String, passages: [ImportantPassage]) {
+        var views: [NSView] = [
+            makeHeader(title: "Page \(page)", badge: status, symbolName: "exclamationmark.triangle"),
+            ReaderInspectorCardView(title: status, body: note, accentColor: ReaderPalette.inspectorAccent)
+        ]
+        if passages.isEmpty {
+            views.append(ReaderInspectorCardView(body: "No highlight details for this page."))
+        } else {
+            views.append(contentsOf: passages.enumerated().map { index, passage in
+                var details = passage.sentence + "\n\n" + passage.explanation
+                if !passage.concepts.isEmpty {
+                    details += "\n\nRelated: " + passage.concepts.joined(separator: ", ") + "."
+                }
+                return ReaderInspectorCardView(
+                    title: "\(index + 1). \(passage.kind) · score \(passage.score)",
+                    body: details
+                )
+            })
+        }
+        replaceContent(with: views)
+    }
+
+    private func replaceContent(with views: [NSView]) {
+        for arrangedSubview in contentStack.arrangedSubviews {
+            contentStack.removeArrangedSubview(arrangedSubview)
+            arrangedSubview.removeFromSuperview()
+        }
+        for view in views {
+            contentStack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
+        layoutSubtreeIfNeeded()
+        documentView.scroll(.zero)
+    }
+
+    private func makeHeader(title: String, badge: String?, symbolName: String) -> NSView {
+        let symbol = NSImageView(
+            image: NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) ?? NSImage()
+        )
+        symbol.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        symbol.contentTintColor = ReaderPalette.inspectorAccent
+        symbol.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 20, weight: .bold)
+        titleLabel.textColor = .white
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let header = NSStackView()
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 10
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.addArrangedSubview(symbol)
+        header.addArrangedSubview(titleLabel)
+        header.addArrangedSubview(spacer)
+        if let badge {
+            header.addArrangedSubview(makeBadge(badge))
+        }
+        NSLayoutConstraint.activate([
+            symbol.widthAnchor.constraint(equalToConstant: 20),
+            symbol.heightAnchor.constraint(equalToConstant: 20)
+        ])
+        return header
+    }
+
+    private func makeBadge(_ text: String) -> NSView {
+        let badge = NSView()
+        badge.wantsLayer = true
+        badge.layer?.backgroundColor = ReaderPalette.control.cgColor
+        badge.layer?.borderWidth = 1
+        badge.layer?.borderColor = ReaderPalette.border.cgColor
+        badge.layer?.cornerRadius = 10
+        badge.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: text.uppercased())
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
+        label.textColor = ReaderPalette.secondaryText
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        badge.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: badge.topAnchor, constant: 4),
+            label.leadingAnchor.constraint(equalTo: badge.leadingAnchor, constant: 9),
+            label.trailingAnchor.constraint(equalTo: badge.trailingAnchor, constant: -9),
+            label.bottomAnchor.constraint(equalTo: badge.bottomAnchor, constant: -4)
+        ])
+        return badge
+    }
 }
 
 @MainActor
@@ -1036,7 +1337,7 @@ final class ReaderViewController: NSViewController {
     private let onBack: () -> Void
     private let pdfView = HighlightAwarePDFView()
     private let petOverlay = PetOverlayView()
-    private let sidebar = NSTextView()
+    private let inspector = ReaderInspectorView()
     private let pageLabel = NSTextField(labelWithString: "Opening textbook...")
     private let previousPageButton = NSButton()
     private let nextPageButton = NSButton()
@@ -1084,29 +1385,10 @@ final class ReaderViewController: NSViewController {
         pdfView.onPointerMoved = { [weak self] point in
             self?.updateInspectorHover(at: point)
         }
-        sidebar.isEditable = false
-        sidebar.drawsBackground = true
-        sidebar.backgroundColor = ReaderPalette.raised
-        sidebar.textColor = ReaderPalette.primaryText
-        sidebar.insertionPointColor = ReaderPalette.primaryText
-        sidebar.textContainerInset = NSSize(width: 18, height: 18)
-
-        let sidebarScroll = NSScrollView()
-        sidebarScroll.documentView = sidebar
-        sidebarScroll.hasVerticalScroller = true
-        sidebarScroll.drawsBackground = true
-        sidebarScroll.backgroundColor = ReaderPalette.raised
-        sidebarScroll.borderType = .noBorder
-        sidebarScroll.contentView.drawsBackground = true
-        sidebarScroll.contentView.backgroundColor = ReaderPalette.raised
-        sidebarScroll.wantsLayer = true
-        sidebarScroll.layer?.borderWidth = 1
-        sidebarScroll.layer?.borderColor = ReaderPalette.border.cgColor
-        sidebarScroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(toolbar)
         root.addSubview(pdfView)
         root.addSubview(petOverlay)
-        root.addSubview(sidebarScroll)
+        root.addSubview(inspector)
         petOverlay.frame.size = PetOverlayView.defaultSize
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: root.topAnchor),
@@ -1115,13 +1397,13 @@ final class ReaderViewController: NSViewController {
             toolbar.heightAnchor.constraint(equalToConstant: ToolbarMetrics.totalHeight),
             pdfView.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 10),
             pdfView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
-            pdfView.trailingAnchor.constraint(equalTo: sidebarScroll.leadingAnchor, constant: -10),
+            pdfView.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -10),
             pdfView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -10),
             pdfView.widthAnchor.constraint(greaterThanOrEqualToConstant: 620),
-            sidebarScroll.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
-            sidebarScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            sidebarScroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            sidebarScroll.widthAnchor.constraint(equalToConstant: 360)
+            inspector.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            inspector.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            inspector.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            inspector.widthAnchor.constraint(equalToConstant: 360)
         ])
         suppressFocusRings(in: root)
         view = root
@@ -1740,58 +2022,37 @@ final class ReaderViewController: NSViewController {
             showInspector(for: passage)
             return
         }
-        let content = NSMutableAttributedString()
-        content.append(NSAttributedString(
-            string: "Highlight details\n",
-            attributes: [
-                .font: NSFont.boldSystemFont(ofSize: 18),
-                .foregroundColor: NSColor.white
-            ]
-        ))
-        content.append(NSAttributedString(string: "\nHover over a highlight to see why it matters.\n", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.secondaryLabelColor]))
-        sidebar.textStorage?.setAttributedString(content)
+        inspector.showEmpty()
     }
 
     private func showInspector(for passage: ImportantPassage) {
-        let content = NSMutableAttributedString()
         if passage.kind == "equation" {
             let formula = passage.formulaDisplay?.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayedFormula = FormulaDisplayFormatter.preferredDisplay(
                 aiDisplay: formula,
                 source: passage.sentence
             )
-            content.append(NSAttributedString(
-                string: "Formula\n\n",
-                attributes: [
-                    .font: NSFont.boldSystemFont(ofSize: 18),
-                    .foregroundColor: NSColor.white
-                ]
-            ))
-            content.append(NSAttributedString(string: displayedFormula + "\n\n", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 15, weight: .medium), .foregroundColor: NSColor.labelColor]))
-            appendInspectorSection("What it means", FormulaLearningSupport.explanation(aiExplanation: passage.explanation, formula: displayedFormula), to: content)
             let symbols = FormulaDisplayFormatter.symbolNotes(for: displayedFormula)
-            if !symbols.isEmpty { appendInspectorSection("Symbols", symbols.joined(separator: "\n"), to: content) }
-            appendInspectorSection("How to use it", FormulaLearningSupport.steps(for: displayedFormula), to: content)
-        } else {
-            content.append(NSAttributedString(string: "Why this matters\n\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 18)]))
-            content.append(NSAttributedString(string: passage.sentence + "\n\n", attributes: [.font: NSFont.systemFont(ofSize: 15, weight: .semibold)]))
-            appendInspectorSection("Why", passage.explanation, to: content)
-            let simpleExplanation = passage.simpleExplanation?.trimmingCharacters(in: .whitespacesAndNewlines)
-            appendInspectorSection(
-                "In simple terms",
-                (simpleExplanation?.isEmpty == false) ? simpleExplanation! : passage.explanation,
-                to: content
+            inspector.showEquation(
+                formula: displayedFormula,
+                explanation: FormulaLearningSupport.explanation(
+                    aiExplanation: passage.explanation,
+                    formula: displayedFormula
+                ),
+                symbols: symbols,
+                steps: FormulaLearningSupport.steps(for: displayedFormula)
             )
-            if !passage.concepts.isEmpty {
-                appendInspectorSection("Connection", "Related: " + passage.concepts.joined(separator: ", ") + ".", to: content)
-            }
+        } else {
+            let simpleExplanation = passage.simpleExplanation?.trimmingCharacters(in: .whitespacesAndNewlines)
+            inspector.showPassage(
+                sentence: passage.sentence,
+                explanation: passage.explanation,
+                simpleExplanation: (simpleExplanation?.isEmpty == false)
+                    ? simpleExplanation!
+                    : passage.explanation,
+                concepts: passage.concepts
+            )
         }
-        sidebar.textStorage?.setAttributedString(content)
-    }
-
-    private func appendInspectorSection(_ title: String, _ body: String, to content: NSMutableAttributedString, monospaced: Bool = false) {
-        content.append(NSAttributedString(string: title + "\n", attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor]))
-        content.append(NSAttributedString(string: body + "\n\n", attributes: [.font: monospaced ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) : NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]))
     }
 
     private func renderSidebar(status: String, passages: [ImportantPassage], note: String) {
@@ -1802,71 +2063,12 @@ final class ReaderViewController: NSViewController {
             showEmptyInspector()
             return
         }
-        let content = NSMutableAttributedString()
-        content.append(NSAttributedString(
-            string: "Page \(currentPageIndex + 1)\n",
-            attributes: [
-                .font: NSFont.boldSystemFont(ofSize: 18),
-                .foregroundColor: ReaderPalette.primaryText
-            ]
-        ))
-        content.append(NSAttributedString(
-            string: "\(status)\n\n",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-                .foregroundColor: ReaderPalette.secondaryText
-            ]
-        ))
-        content.append(NSAttributedString(
-            string: "\(note)\n\n",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: ReaderPalette.secondaryText
-            ]
-        ))
-        if passages.isEmpty {
-            content.append(NSAttributedString(
-                string: "No highlight details for this page.",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 13),
-                    .foregroundColor: ReaderPalette.primaryText
-                ]
-            ))
-        }
-        for (index, passage) in passages.enumerated() {
-            content.append(NSAttributedString(
-                string: "\(index + 1). \(passage.kind) - score \(passage.score)\n",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-                    .foregroundColor: ReaderPalette.secondaryText
-                ]
-            ))
-            content.append(NSAttributedString(
-                string: "\(passage.sentence)\n",
-                attributes: [
-                    .font: NSFont.boldSystemFont(ofSize: 13),
-                    .foregroundColor: ReaderPalette.primaryText
-                ]
-            ))
-            content.append(NSAttributedString(
-                string: "\(passage.explanation)\n",
-                attributes: [
-                    .font: NSFont.systemFont(ofSize: 12),
-                    .foregroundColor: ReaderPalette.primaryText
-                ]
-            ))
-            if !passage.concepts.isEmpty {
-                content.append(NSAttributedString(
-                    string: "Concepts: \(passage.concepts.joined(separator: ", "))\n",
-                    attributes: [
-                        .font: NSFont.systemFont(ofSize: 11),
-                        .foregroundColor: ReaderPalette.secondaryText
-                    ]
-                ))
-            }
-            content.append(NSAttributedString(string: "\n"))
-        }
-        sidebar.textStorage?.setAttributedString(content)
+        inspector.showError(
+            page: currentPageIndex + 1,
+            status: status,
+            note: note,
+            passages: passages
+        )
     }
 
     @objc private func retryPage() {
