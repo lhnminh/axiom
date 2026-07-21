@@ -2,6 +2,8 @@
 
 A native macOS textbook reader that extracts PDF metadata locally and highlights important text on demand.
 
+![Axiom highlighting a textbook formula and explaining it in the reader sidebar](docs/img/Axiom_highlight_preview.jpeg)
+
 ## What it does
 
 - Opens with a textbook library instead of immediately showing a file picker.
